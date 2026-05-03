@@ -50,3 +50,10 @@ module Stats =
     let getCategoryBreakdown () =
         let expenses = Storage.getAllExpenses()
         expenses |> List.groupBy (fun e -> e.Category) |> List.map (fun (c, lst) -> {| Category = c; Total = lst |> List.sumBy (fun e -> e.Amount) |})
+
+    let getMonthlyTrends () =
+        let expenses = Storage.getAllExpenses()
+        expenses 
+        |> List.groupBy (fun e -> e.Date.ToString("yyyy-MM")) 
+        |> List.map (fun (m, lst) -> {| Month = m; Total = lst |> List.sumBy (fun e -> e.Amount) |})
+        |> List.sortBy (fun x -> x.Month)

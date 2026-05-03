@@ -3,7 +3,8 @@ const app = {
         stats: null,
         anomalies: [],
         expenses: [],
-        categories: []
+        categories: [],
+        trends: []
     },
 
     async init() {
@@ -27,6 +28,7 @@ const app = {
         this.state.anomalies = await this.fetchAPI('/api/anomalies');
         this.state.expenses = await this.fetchAPI('/api/expenses');
         this.state.categories = await this.fetchAPI('/api/categories');
+        this.state.trends = await this.fetchAPI('/api/trends');
     },
 
     async runAnomalyEngine() {
@@ -47,7 +49,7 @@ const app = {
     },
 
     renderDashboard(el) {
-        const { stats, anomalies, expenses, categories } = this.state;
+        const { stats, anomalies, expenses, categories, trends } = this.state;
         
         let html = `
             <div class="flex-between">
@@ -56,14 +58,15 @@ const app = {
             </div>
             
             <div class="grid-3">
-                <div class="card"><h3>Total Expenses</h3><div class="value">${stats.TotalExpenses.toFixed(2)}</div></div>
-                <div class="card"><h3>Current Month</h3><div class="value">${stats.CurrentMonthSpending.toFixed(2)}</div></div>
-                <div class="card"><h3>Avg Monthly</h3><div class="value">${stats.AverageMonthlySpending.toFixed(2)}</div></div>
-                <div class="card"><h3>Anomalies</h3><div class="value">${stats.AnomalyCount}</div></div>
-                <div class="card"><h3>Highest Risk Category</h3><div class="value">${stats.HighestRiskCategory}</div></div>
+                <div class="card"><h3>Total Expenses</h3><div class="value">${stats.totalExpenses.toFixed(2)}</div></div>
+                <div class="card"><h3>Current Month</h3><div class="value">${stats.currentMonthSpending.toFixed(2)}</div></div>
+                <div class="card"><h3>Avg Monthly</h3><div class="value">${stats.averageMonthlySpending.toFixed(2)}</div></div>
+                <div class="card"><h3>Anomalies</h3><div class="value">${stats.anomalyCount}</div></div>
+                <div class="card"><h3>Highest Risk Category</h3><div class="value">${stats.highestRiskCategory}</div></div>
             </div>
             
-            <div class="grid-3" style="grid-template-columns: 1fr 1fr;">
+            <div class="grid-3" style="grid-template-columns: 2fr 1fr;">
+                <div class="chart-container"><canvas id="trendChart"></canvas></div>
                 <div class="chart-container"><canvas id="catChart"></canvas></div>
             </div>
 
@@ -74,11 +77,11 @@ const app = {
                     <tbody>
                         ${anomalies.map(a => `
                             <tr>
-                                <td>${new Date(a.DetectedAt).toLocaleString()}</td>
-                                <td>${a.Score}</td>
-                                <td><span class="badge ${a.Severity.toLowerCase()}">${a.Severity}</span></td>
-                                <td>${a.Reason}</td>
-                                <td>${a.Recommendation}</td>
+                                <td>${new Date(a.detectedAt).toLocaleString()}</td>
+                                <td>${a.score}</td>
+                                <td><span class="badge ${a.severity.toLowerCase()}">${a.severity}</span></td>
+                                <td>${a.reason}</td>
+                                <td>${a.recommendation}</td>
                             </tr>
                         `).join('')}
                         ${anomalies.length === 0 ? '<tr><td colspan="5">No anomalies detected.</td></tr>' : ''}
@@ -93,11 +96,11 @@ const app = {
                     <tbody>
                         ${expenses.slice(0, 10).map(e => `
                             <tr>
-                                <td>${new Date(e.Date).toLocaleDateString()}</td>
-                                <td>${e.Merchant}</td>
-                                <td>${e.Category}</td>
-                                <td>${e.Amount.toFixed(2)}</td>
-                                <td>${e.Currency}</td>
+                                <td>${new Date(e.date).toLocaleDateString()}</td>
+                                <td>${e.merchant}</td>
+                                <td>${e.category}</td>
+                                <td>${e.amount.toFixed(2)}</td>
+                                <td>${e.currency}</td>
                             </tr>
                         `).join('')}
                     </tbody>
@@ -107,13 +110,30 @@ const app = {
         el.innerHTML = html;
 
         setTimeout(() => {
+            if (trends.length > 0) {
+                new Chart(document.getElementById('trendChart'), {
+                    type: 'line',
+                    data: {
+                        labels: trends.map(t => t.month),
+                        datasets: [{
+                            label: 'Monthly Spending',
+                            data: trends.map(t => t.total),
+                            borderColor: '#bb86fc',
+                            tension: 0.1,
+                            fill: false
+                        }]
+                    },
+                    options: { responsive: true, plugins: { title: { display: true, text: 'Spending Trends', color: '#fff' }, legend: { labels: { color: '#fff'} } }, scales: { y: { ticks: { color: '#fff' } }, x: { ticks: { color: '#fff' } } } }
+                });
+            }
+
             if (categories.length > 0) {
                 new Chart(document.getElementById('catChart'), {
                     type: 'doughnut',
                     data: {
-                        labels: categories.map(c => c.Category),
+                        labels: categories.map(c => c.category),
                         datasets: [{
-                            data: categories.map(c => c.Total),
+                            data: categories.map(c => c.total),
                             backgroundColor: ['#bb86fc', '#03dac6', '#cf6679', '#f2c94c', '#4a148c', '#3700b3']
                         }]
                     },
@@ -188,8 +208,8 @@ const app = {
                 body: formData
             });
             document.getElementById('csvResult').innerHTML = `
-                <p style="color:var(--success-color)">Imported: ${res.ImportedRows}</p>
-                <p style="color:var(--error-color)">Skipped: ${res.SkippedRows}</p>
+                <p style="color:var(--success-color)">Imported: ${res.importedRows}</p>
+                <p style="color:var(--error-color)">Skipped: ${res.skippedRows}</p>
             `;
         } catch (err) {
             document.getElementById('csvResult').innerText = "Import failed.";

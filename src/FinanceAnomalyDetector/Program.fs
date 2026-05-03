@@ -64,6 +64,9 @@ module Program =
     let getCategoriesHandler : HttpHandler =
         fun next ctx -> json (Stats.getCategoryBreakdown()) next ctx
 
+    let getTrendsHandler : HttpHandler =
+        fun next ctx -> json (Stats.getMonthlyTrends()) next ctx
+
     let webApp =
         choose [
             GET >=> choose [
@@ -72,6 +75,7 @@ module Program =
                 route "/api/anomalies" >=> getAnomaliesHandler
                 route "/api/stats" >=> getStatsHandler
                 route "/api/categories" >=> getCategoriesHandler
+                route "/api/trends" >=> getTrendsHandler
             ]
             POST >=> choose [
                 route "/api/expenses" >=> postExpenseHandler
