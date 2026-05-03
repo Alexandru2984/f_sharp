@@ -5,6 +5,7 @@ open System
 [<CLIMutable>]
 type Expense = {
     Id : int
+    UserId : int
     Amount : decimal
     Currency : string
     Category : string
@@ -17,6 +18,7 @@ type Expense = {
 [<CLIMutable>]
 type Anomaly = {
     Id : int
+    UserId : int
     ExpenseId : int
     Score : int
     Severity : string
@@ -28,6 +30,7 @@ type Anomaly = {
 
 [<CLIMutable>]
 type Budget = {
+    UserId : int
     Category : string
     LimitAmount : decimal
 }

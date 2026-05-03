@@ -16,7 +16,7 @@ module CsvImport =
         Description: string
     }
     
-    let importCsv (reader: TextReader) =
+    let importCsv userId (reader: TextReader) =
         let config = CsvConfiguration(CultureInfo.InvariantCulture, HasHeaderRecord = true, MissingFieldFound = null, PrepareHeaderForMatch = PrepareHeaderForMatch(fun args -> args.Header.ToLower()))
         use csv = new CsvReader(reader, config)
         let records = csv.GetRecords<CsvExpense>() |> List.ofSeq
@@ -41,7 +41,7 @@ module CsvImport =
                 }
                 match Validation.validateExpense dto with
                 | Ok validDto ->
-                    Storage.insertExpense validDto |> ignore
+                    Storage.insertExpense userId validDto |> ignore
                     imported <- imported + 1
                 | Error errs ->
                     skipped <- skipped + 1

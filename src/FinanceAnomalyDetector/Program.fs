@@ -21,19 +21,46 @@ module Program =
     let authChallenge : HttpHandler =
         setStatusCode 401 >=> json {| error = "Unauthorized" |}
 
+    let getUserId (ctx: HttpContext) =
+        let claim = ctx.User.FindFirst(ClaimTypes.NameIdentifier)
+        if isNull claim then 0 else int claim.Value
+
     let loginHandler : HttpHandler =
         fun next ctx ->
             task {
                 let! dto = ctx.BindJsonAsync<LoginRequest>()
                 match Storage.getUserByUsername dto.Username with
                 | Some user when BCrypt.Net.BCrypt.Verify(dto.Password, user.PasswordHash) ->
-                    let claims = [| Claim(ClaimTypes.Name, user.Username) |]
+                    let claims = [| 
+                        Claim(ClaimTypes.Name, user.Username)
+                        Claim(ClaimTypes.NameIdentifier, user.Id.ToString()) 
+                    |]
                     let identity = ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme)
                     let principal = ClaimsPrincipal(identity)
                     do! ctx.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal)
                     return! json {| status = "success" |} next ctx
                 | _ ->
                     return! (setStatusCode 401 >=> json {| error = "Invalid credentials" |}) next ctx
+            }
+
+    let registerHandler : HttpHandler =
+        fun next ctx ->
+            task {
+                let! dto = ctx.BindJsonAsync<LoginRequest>()
+                match Storage.getUserByUsername dto.Username with
+                | Some _ ->
+                    return! (setStatusCode 400 >=> json {| error = "Username already exists" |}) next ctx
+                | None ->
+                    let hash = BCrypt.Net.BCrypt.HashPassword(dto.Password)
+                    let user = Storage.createUser dto.Username hash
+                    let claims = [| 
+                        Claim(ClaimTypes.Name, user.Username)
+                        Claim(ClaimTypes.NameIdentifier, user.Id.ToString()) 
+                    |]
+                    let identity = ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme)
+                    let principal = ClaimsPrincipal(identity)
+                    do! ctx.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal)
+                    return! json {| status = "success" |} next ctx
             }
 
     let logoutHandler : HttpHandler =
@@ -47,7 +74,7 @@ module Program =
         fun next ctx -> json {| status = "OK" |} next ctx
         
     let getExpensesHandler : HttpHandler =
-        fun next ctx -> json (Storage.getExpenses()) next ctx
+        fun next ctx -> json (Storage.getExpenses (getUserId ctx)) next ctx
         
     let postExpenseHandler : HttpHandler =
         fun next ctx ->
@@ -55,7 +82,7 @@ module Program =
                 let! dto = ctx.BindJsonAsync<ExpenseDto>()
                 match Validation.validateExpense dto with
                 | Ok validDto -> 
-                    let exp = Storage.insertExpense validDto
+                    let exp = Storage.insertExpense (getUserId ctx) validDto
                     return! json exp next ctx
                 | Error errors ->
                     return! (setStatusCode 400 >=> json {| errors = errors |}) next ctx
@@ -74,40 +101,40 @@ module Program =
                     else
                         use stream = file.OpenReadStream()
                         use reader = new StreamReader(stream)
-                        let result = CsvImport.importCsv reader
+                        let result = CsvImport.importCsv (getUserId ctx) reader
                         return! json result next ctx
             }
 
     let getAnomaliesHandler : HttpHandler =
-        fun next ctx -> json (Storage.getAnomalies()) next ctx
+        fun next ctx -> json (Storage.getAnomalies (getUserId ctx)) next ctx
         
     let runAnomaliesHandler : HttpHandler =
         fun next ctx ->
-            let count = AnomalyEngine.runAll()
+            let count = AnomalyEngine.runAll (getUserId ctx)
             json {| detected = count; message = sprintf "Anomaly detection completed. Found %d anomalies." count |} next ctx
             
     let patchAnomalyHandler (id: int) : HttpHandler =
         fun next ctx ->
-            Storage.resolveAnomaly id
+            Storage.resolveAnomaly (getUserId ctx) id
             json {| status = "success" |} next ctx
             
     let getStatsHandler : HttpHandler =
-        fun next ctx -> json (Stats.getDashboardStats()) next ctx
+        fun next ctx -> json (Stats.getDashboardStats (getUserId ctx)) next ctx
         
     let getCategoriesHandler : HttpHandler =
-        fun next ctx -> json (Stats.getCategoryBreakdown()) next ctx
+        fun next ctx -> json (Stats.getCategoryBreakdown (getUserId ctx)) next ctx
 
     let getTrendsHandler : HttpHandler =
-        fun next ctx -> json (Stats.getMonthlyTrends()) next ctx
+        fun next ctx -> json (Stats.getMonthlyTrends (getUserId ctx)) next ctx
 
     let getBudgetsHandler : HttpHandler =
-        fun next ctx -> json (Stats.getBudgetStatus()) next ctx
+        fun next ctx -> json (Stats.getBudgetStatus (getUserId ctx)) next ctx
 
     let postBudgetHandler : HttpHandler =
         fun next ctx ->
             task {
                 let! dto = ctx.BindJsonAsync<Budget>()
-                Storage.setBudget dto.Category dto.LimitAmount
+                Storage.setBudget (getUserId ctx) dto.Category dto.LimitAmount
                 return! json {| status = "success" |} next ctx
             }
 
@@ -137,6 +164,7 @@ module Program =
         choose [
             GET >=> route "/health" >=> getHealth
             POST >=> route "/api/login" >=> loginHandler
+            POST >=> route "/api/register" >=> registerHandler
             POST >=> route "/api/logout" >=> logoutHandler
             apiRoutes
         ]

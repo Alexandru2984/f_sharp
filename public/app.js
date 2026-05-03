@@ -320,11 +320,17 @@ const app = {
     },
 
     renderLoginPage(el) {
+        const isRegistering = this.state.isRegistering || false;
+        const title = isRegistering ? "Create Account" : "Sign In";
+        const action = isRegistering ? "Register" : "Login";
+        const toggleText = isRegistering ? "Already have an account? Sign In" : "Need an account? Register";
+        const onSubmit = isRegistering ? "app.submitRegister(event)" : "app.submitLogin(event)";
+
         el.innerHTML = `
             <div style="display:flex; justify-content:center; margin-top: 4rem;">
                 <div class="card" style="width: 100%; max-width: 400px; padding: 2rem;">
-                    <h2 style="text-align:center; margin-bottom:1.5rem; color:var(--primary-color)">Admin Login</h2>
-                    <form onsubmit="app.submitLogin(event)">
+                    <h2 style="text-align:center; margin-bottom:1.5rem; color:var(--primary-color)">${title}</h2>
+                    <form onsubmit="${onSubmit}">
                         <div class="form-group">
                             <label>Username</label>
                             <input type="text" id="l_username" required>
@@ -333,11 +339,42 @@ const app = {
                             <label>Password</label>
                             <input type="password" id="l_password" required>
                         </div>
-                        <button type="submit" class="btn" style="width:100%; margin-top:1rem;">Login</button>
+                        <button type="submit" class="btn" style="width:100%; margin-top:1rem;">${action}</button>
+                        <div style="text-align:center; margin-top:1rem;">
+                            <a href="#" onclick="app.toggleRegister()" style="color:var(--text-secondary); font-size:0.875rem;">${toggleText}</a>
+                        </div>
                     </form>
                 </div>
             </div>
         `;
+    },
+
+    toggleRegister() {
+        this.state.isRegistering = !this.state.isRegistering;
+        this.showPage('login');
+    },
+
+    async submitRegister(e) {
+        e.preventDefault();
+        const data = {
+            username: document.getElementById('l_username').value,
+            password: document.getElementById('l_password').value
+        };
+        try {
+            const r = await fetch('/api/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            if(!r.ok) {
+                const txt = await r.text();
+                throw new Error(txt);
+            }
+            this.state.isRegistering = false;
+            await this.init();
+        } catch (err) {
+            alert('Registration failed: ' + err.message);
+        }
     },
 
     async submitLogin(e) {

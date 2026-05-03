@@ -10,3 +10,5 @@ data/finance.db-wal
 *.user
 *.suo
 .DS_Store
+*.sqlite
+*.sqlite3

@@ -11,9 +11,9 @@ module Stats =
         HighestRiskCategory : string
     }
 
-    let getDashboardStats () =
-        let expenses = Storage.getAllExpenses()
-        let anomalies = Storage.getAnomalies()
+    let getDashboardStats userId =
+        let expenses = Storage.getAllExpenses userId
+        let anomalies = Storage.getAnomalies userId
         
         let total = expenses |> List.sumBy (fun e -> e.Amount)
         
@@ -47,20 +47,20 @@ module Stats =
           AnomalyCount = anomalyCount
           HighestRiskCategory = highestRiskCat }
           
-    let getCategoryBreakdown () =
-        let expenses = Storage.getAllExpenses()
+    let getCategoryBreakdown userId =
+        let expenses = Storage.getAllExpenses userId
         expenses |> List.groupBy (fun e -> e.Category) |> List.map (fun (c, lst) -> {| Category = c; Total = lst |> List.sumBy (fun e -> e.Amount) |})
 
-    let getMonthlyTrends () =
-        let expenses = Storage.getAllExpenses()
+    let getMonthlyTrends userId =
+        let expenses = Storage.getAllExpenses userId
         expenses 
         |> List.groupBy (fun e -> e.Date.ToString("yyyy-MM")) 
         |> List.map (fun (m, lst) -> {| Month = m; Total = lst |> List.sumBy (fun e -> e.Amount) |})
         |> List.sortBy (fun x -> x.Month)
 
-    let getBudgetStatus () =
-        let budgets = Storage.getBudgets()
-        let expenses = Storage.getAllExpenses()
+    let getBudgetStatus userId =
+        let budgets = Storage.getBudgets userId
+        let expenses = Storage.getAllExpenses userId
         let currentMonth = DateTime.UtcNow.Month
         let currentYear = DateTime.UtcNow.Year
         
