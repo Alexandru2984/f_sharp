@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API Docs - Finance Anomaly Detector</title>
+    <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="container nav-container">
+            <div class="logo">Finance Anomaly Detector</div>
+            <div class="links">
+                <a href="/">App</a>
+            </div>
+        </div>
+    </nav>
+    <main class="container" style="padding: 2rem 0;">
+        <h1>API Documentation</h1>
+        <p>This page describes the API endpoints and detection rules for the Finance Anomaly Detector.</p>
+
+        <h2 style="margin-top: 2rem;">Endpoints</h2>
+        
+        <h3>GET /health</h3>
+        <p>Check application status.</p>
+        
+        <h3>GET /api/expenses</h3>
+        <p>Returns recent expenses.</p>
+        
+        <h3>POST /api/expenses</h3>
+        <p>Create a single expense. JSON body:</p>
+        <div class="docs-code">
+{
+    "Amount": 100.50,
+    "Currency": "USD",
+    "Category": "Groceries",
+    "Merchant": "Walmart",
+    "Description": "Weekly groceries",
+    "Date": "2026-05-03T10:00:00Z"
+}
+        </div>
+
+        <h3>POST /api/expenses/import-csv</h3>
+        <p>Upload a CSV file with form-data 'file'. Expected columns: Date, Amount, Currency, Category, Merchant, Description.</p>
+
+        <h3>GET /api/anomalies</h3>
+        <p>Get a list of detected anomalies.</p>
+
+        <h3>POST /api/anomalies/run</h3>
+        <p>Trigger the anomaly detection engine across all expenses.</p>
+
+        <h2 style="margin-top: 2rem;">Anomaly Rules</h2>
+        <ul>
+            <li><strong>High Expense:</strong> Over 3x the category average.</li>
+            <li><strong>Merchant Spike:</strong> Over 4x the merchant average.</li>
+            <li><strong>Category Change:</strong> Merchant used in an unusual category compared to past transactions.</li>
+            <li><strong>Night Spending:</strong> Transactions made between 1 AM and 4 AM.</li>
+        </ul>
+
+        <h2 style="margin-top: 2rem;">Example CURL</h2>
+        <div class="docs-code">
+curl -X POST http://localhost:5000/api/anomalies/run
+        </div>
+    </main>
+</body>
+</html>

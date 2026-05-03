@@ -1,0 +1,12 @@
+bin/
+obj/
+publish/
+data/finance.db
+data/finance.db-shm
+data/finance.db-wal
+.env
+.idea/
+.vscode/
+*.user
+*.suo
+.DS_Store
