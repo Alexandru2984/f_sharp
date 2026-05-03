@@ -1,3 +1,7 @@
+const escapeHTML = str => str ? str.replace(/[&<>'"]/g, tag => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+}[tag])) : str;
+
 const app = {
     state: {
         stats: null,
@@ -126,9 +130,9 @@ const app = {
                             <tr>
                                 <td>${new Date(a.detectedAt).toLocaleString()}</td>
                                 <td>${a.score}</td>
-                                <td><span class="badge ${a.severity.toLowerCase()}">${a.severity}</span></td>
-                                <td>${a.reason}</td>
-                                <td>${a.recommendation}</td>
+                                <td><span class="badge ${a.severity.toLowerCase()}">${escapeHTML(a.severity)}</span></td>
+                                <td>${escapeHTML(a.reason)}</td>
+                                <td>${escapeHTML(a.recommendation)}</td>
                                 <td><button class="btn btn-small" onclick="app.resolveAnomaly(${a.id})">Dismiss</button></td>
                             </tr>
                         `).join('')}
@@ -145,10 +149,10 @@ const app = {
                         ${expenses.slice(0, 10).map(e => `
                             <tr>
                                 <td>${new Date(e.date).toLocaleDateString()}</td>
-                                <td>${e.merchant}</td>
-                                <td>${e.category}</td>
+                                <td>${escapeHTML(e.merchant)}</td>
+                                <td>${escapeHTML(e.category)}</td>
                                 <td>${e.amount.toFixed(2)}</td>
-                                <td>${e.currency}</td>
+                                <td>${escapeHTML(e.currency)}</td>
                             </tr>
                         `).join('')}
                     </tbody>

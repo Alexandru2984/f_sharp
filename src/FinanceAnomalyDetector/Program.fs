@@ -187,6 +187,9 @@ module Program =
                    options.Events.OnRedirectToLogin <- fun context -> 
                        context.Response.StatusCode <- 401
                        System.Threading.Tasks.Task.CompletedTask
+                   options.Cookie.HttpOnly <- true
+                   options.Cookie.SecurePolicy <- CookieSecurePolicy.Always
+                   options.Cookie.SameSite <- Microsoft.AspNetCore.Http.SameSiteMode.Strict
                ) |> ignore
         builder.Services.AddAuthorization() |> ignore
         
