@@ -80,6 +80,11 @@ th { color: var(--text-secondary); font-weight: 500; }
 
 .btn:hover { opacity: 0.9; }
 
+.btn-small {
+    padding: 0.25rem 0.75rem;
+    font-size: 0.75rem;
+}
+
 .form-group { margin-bottom: 1rem; }
 .form-group label { display: block; margin-bottom: 0.5rem; color: var(--text-secondary); }
 .form-group input, .form-group textarea, .form-group select {
@@ -96,3 +101,23 @@ th { color: var(--text-secondary); font-weight: 500; }
 .flex-between { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
 
 .docs-code { background-color: #000; padding: 1rem; border-radius: 4px; overflow-x: auto; font-family: monospace; color: var(--success-color); margin: 1rem 0; }
+
+.progress-container {
+    background-color: var(--border-color);
+    border-radius: 10px;
+    height: 10px;
+    width: 100%;
+    margin-top: 0.5rem;
+    overflow: hidden;
+}
+
+.progress-bar {
+    height: 100%;
+    background-color: var(--primary-color);
+    transition: width 0.3s;
+}
+
+.progress-bar.over {
+    background-color: var(--error-color);
+}
+

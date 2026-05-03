@@ -23,6 +23,13 @@ type Anomaly = {
     Reason : string
     Recommendation : string
     DetectedAt : DateTime
+    IsResolved : bool
+}
+
+[<CLIMutable>]
+type Budget = {
+    Category : string
+    LimitAmount : decimal
 }
 
 type ImportResult = {

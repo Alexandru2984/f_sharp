@@ -4,7 +4,8 @@ const app = {
         anomalies: [],
         expenses: [],
         categories: [],
-        trends: []
+        trends: [],
+        budgets: []
     },
 
     async init() {
@@ -29,10 +30,16 @@ const app = {
         this.state.expenses = await this.fetchAPI('/api/expenses');
         this.state.categories = await this.fetchAPI('/api/categories');
         this.state.trends = await this.fetchAPI('/api/trends');
+        this.state.budgets = await this.fetchAPI('/api/budgets');
     },
 
     async runAnomalyEngine() {
         await this.fetchAPI('/api/anomalies/run', { method: 'POST' });
+        await this.showPage('dashboard');
+    },
+
+    async resolveAnomaly(id) {
+        await this.fetchAPI(`/api/anomalies/${id}/resolve`, { method: 'PATCH' });
         await this.showPage('dashboard');
     },
 
@@ -45,16 +52,22 @@ const app = {
             this.renderDashboard(content);
         } else if (page === 'import') {
             this.renderImportPage(content);
+        } else if (page === 'budgets') {
+            await this.loadDashboardData();
+            this.renderBudgetsPage(content);
         }
     },
 
     renderDashboard(el) {
-        const { stats, anomalies, expenses, categories, trends } = this.state;
+        const { stats, anomalies, expenses, categories, trends, budgets } = this.state;
         
         let html = `
             <div class="flex-between">
                 <h2>Dashboard Overview</h2>
-                <button class="btn" onclick="app.runAnomalyEngine()">Run Detection Engine</button>
+                <div style="display:flex; gap: 1rem;">
+                    <button class="btn btn-secondary" style="background-color: var(--surface-color); color: var(--text-primary); border: 1px solid var(--border-color);" onclick="app.showPage('budgets')">Budgets</button>
+                    <button class="btn" onclick="app.runAnomalyEngine()">Run Engine</button>
+                </div>
             </div>
             
             <div class="grid-3">
@@ -64,6 +77,23 @@ const app = {
                 <div class="card"><h3>Anomalies</h3><div class="value">${stats.anomalyCount}</div></div>
                 <div class="card"><h3>Highest Risk Category</h3><div class="value">${stats.highestRiskCategory}</div></div>
             </div>
+
+            ${budgets.length > 0 ? `
+            <h3>Budget Status (Current Month)</h3>
+            <div class="grid-3" style="margin-bottom: 2rem;">
+                ${budgets.map(b => `
+                    <div class="card">
+                        <div class="flex-between">
+                            <h3 style="margin-bottom:0">${b.category}</h3>
+                            <span style="font-size:0.8rem; color:var(--text-secondary)">${b.spent.toFixed(0)} / ${b.limit.toFixed(0)}</span>
+                        </div>
+                        <div class="progress-container">
+                            <div class="progress-bar ${b.percentage > 100 ? 'over' : ''}" style="width: ${Math.min(100, b.percentage)}%"></div>
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+            ` : ''}
             
             <div class="grid-3" style="grid-template-columns: 2fr 1fr;">
                 <div class="chart-container"><canvas id="trendChart"></canvas></div>
@@ -73,7 +103,7 @@ const app = {
             <h3>Recent Anomalies</h3>
             <div class="table-container">
                 <table>
-                    <thead><tr><th>Date Detected</th><th>Score</th><th>Severity</th><th>Reason</th><th>Recommendation</th></tr></thead>
+                    <thead><tr><th>Date Detected</th><th>Score</th><th>Severity</th><th>Reason</th><th>Recommendation</th><th>Action</th></tr></thead>
                     <tbody>
                         ${anomalies.map(a => `
                             <tr>
@@ -82,9 +112,10 @@ const app = {
                                 <td><span class="badge ${a.severity.toLowerCase()}">${a.severity}</span></td>
                                 <td>${a.reason}</td>
                                 <td>${a.recommendation}</td>
+                                <td><button class="btn btn-small" onclick="app.resolveAnomaly(${a.id})">Dismiss</button></td>
                             </tr>
                         `).join('')}
-                        ${anomalies.length === 0 ? '<tr><td colspan="5">No anomalies detected.</td></tr>' : ''}
+                        ${anomalies.length === 0 ? '<tr><td colspan="6">No anomalies detected.</td></tr>' : ''}
                     </tbody>
                 </table>
             </div>
@@ -180,12 +211,12 @@ const app = {
     async submitManual(e) {
         e.preventDefault();
         const data = {
-            Amount: parseFloat(document.getElementById('m_amount').value),
-            Currency: document.getElementById('m_currency').value,
-            Category: document.getElementById('m_category').value,
-            Merchant: document.getElementById('m_merchant').value,
-            Description: document.getElementById('m_desc').value,
-            Date: document.getElementById('m_date').value
+            amount: parseFloat(document.getElementById('m_amount').value),
+            currency: document.getElementById('m_currency').value,
+            category: document.getElementById('m_category').value,
+            merchant: document.getElementById('m_merchant').value,
+            description: document.getElementById('m_desc').value,
+            date: document.getElementById('m_date').value
         };
         await this.fetchAPI('/api/expenses', {
             method: 'POST',
@@ -214,6 +245,61 @@ const app = {
         } catch (err) {
             document.getElementById('csvResult').innerText = "Import failed.";
         }
+    },
+
+    renderBudgetsPage(el) {
+        const { budgets, categories } = this.state;
+        el.innerHTML = `
+            <h2>Manage Category Budgets</h2>
+            <div class="card" style="margin-top:2rem; max-width: 600px;">
+                <form onsubmit="app.saveBudget(event)">
+                    <div class="form-group">
+                        <label>Category</label>
+                        <select id="b_category" style="width:100%; padding:0.75rem; background:#121212; color:white; border:1px solid #333;" required>
+                            <option value="">Select a category</option>
+                            ${categories.map(c => `<option value="${c.category}">${c.category}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Monthly Limit</label>
+                        <input type="number" step="0.01" id="b_limit" required>
+                    </div>
+                    <button type="submit" class="btn">Save Budget</button>
+                    <button type="button" class="btn" style="background:transparent; color:white; border:1px solid #333; margin-left:1rem;" onclick="app.showPage('dashboard')">Back</button>
+                </form>
+            </div>
+
+            <h3 style="margin-top:2rem;">Active Budgets</h3>
+            <div class="table-container" style="margin-top:1rem;">
+                <table>
+                    <thead><tr><th>Category</th><th>Limit</th></tr></thead>
+                    <tbody>
+                        ${budgets.map(b => `
+                            <tr>
+                                <td>${b.category}</td>
+                                <td>${b.limit.toFixed(2)}</td>
+                            </tr>
+                        `).join('')}
+                        ${budgets.length === 0 ? '<tr><td colspan="2">No budgets set.</td></tr>' : ''}
+                    </tbody>
+                </table>
+            </div>
+        `;
+    },
+
+    async saveBudget(e) {
+        e.preventDefault();
+        const data = {
+            category: document.getElementById('b_category').value,
+            limitAmount: parseFloat(document.getElementById('b_limit').value)
+        };
+        await this.fetchAPI('/api/budgets', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        alert('Budget saved!');
+        this.showPage('budgets');
     }
 };
 

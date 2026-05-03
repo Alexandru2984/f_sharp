@@ -57,3 +57,17 @@ module Stats =
         |> List.groupBy (fun e -> e.Date.ToString("yyyy-MM")) 
         |> List.map (fun (m, lst) -> {| Month = m; Total = lst |> List.sumBy (fun e -> e.Amount) |})
         |> List.sortBy (fun x -> x.Month)
+
+    let getBudgetStatus () =
+        let budgets = Storage.getBudgets()
+        let expenses = Storage.getAllExpenses()
+        let currentMonth = DateTime.UtcNow.Month
+        let currentYear = DateTime.UtcNow.Year
+        
+        budgets |> List.map (fun b ->
+            let spent = 
+                expenses 
+                |> List.filter (fun e -> e.Category = b.Category && e.Date.Month = currentMonth && e.Date.Year = currentYear)
+                |> List.sumBy (fun e -> e.Amount)
+            {| Category = b.Category; Limit = b.LimitAmount; Spent = spent; Percentage = if b.LimitAmount = 0m then 0m else (spent / b.LimitAmount) * 100m |}
+        )

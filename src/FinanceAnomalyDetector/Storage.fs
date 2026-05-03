@@ -30,7 +30,12 @@ module Storage =
                 Reason TEXT NOT NULL,
                 Recommendation TEXT NOT NULL,
                 DetectedAt DATETIME NOT NULL,
+                IsResolved BOOLEAN NOT NULL DEFAULT 0,
                 FOREIGN KEY(ExpenseId) REFERENCES Expenses(Id)
+            );
+            CREATE TABLE IF NOT EXISTS Budgets (
+                Category TEXT PRIMARY KEY,
+                LimitAmount DECIMAL NOT NULL
             );
         """
         cmd.ExecuteNonQuery() |> ignore
@@ -63,11 +68,25 @@ module Storage =
     let insertAnomaly (anomaly: Anomaly) =
         use conn = new SqliteConnection(connectionString)
         let sql = """
-            INSERT INTO Anomalies (ExpenseId, Score, Severity, Reason, Recommendation, DetectedAt)
-            VALUES (@ExpenseId, @Score, @Severity, @Reason, @Recommendation, @DetectedAt);
+            INSERT INTO Anomalies (ExpenseId, Score, Severity, Reason, Recommendation, DetectedAt, IsResolved)
+            VALUES (@ExpenseId, @Score, @Severity, @Reason, @Recommendation, @DetectedAt, @IsResolved);
         """
         conn.Execute(sql, anomaly) |> ignore
 
+    let resolveAnomaly (id: int) =
+        use conn = new SqliteConnection(connectionString)
+        let sql = "UPDATE Anomalies SET IsResolved = 1 WHERE Id = @Id"
+        conn.Execute(sql, {| Id = id |}) |> ignore
+
     let getAnomalies () =
         use conn = new SqliteConnection(connectionString)
-        conn.Query<Anomaly>("SELECT * FROM Anomalies ORDER BY DetectedAt DESC LIMIT 100") |> List.ofSeq
+        conn.Query<Anomaly>("SELECT * FROM Anomalies WHERE IsResolved = 0 ORDER BY DetectedAt DESC LIMIT 100") |> List.ofSeq
+
+    let setBudget (category: string) (limit: decimal) =
+        use conn = new SqliteConnection(connectionString)
+        let sql = "INSERT OR REPLACE INTO Budgets (Category, LimitAmount) VALUES (@Category, @LimitAmount)"
+        conn.Execute(sql, {| Category = category; LimitAmount = limit |}) |> ignore
+
+    let getBudgets () =
+        use conn = new SqliteConnection(connectionString)
+        conn.Query<Budget>("SELECT * FROM Budgets") |> List.ofSeq

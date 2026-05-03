@@ -58,6 +58,11 @@ module Program =
             let count = AnomalyEngine.runAll()
             json {| detected = count; message = sprintf "Anomaly detection completed. Found %d anomalies." count |} next ctx
             
+    let patchAnomalyHandler (id: int) : HttpHandler =
+        fun next ctx ->
+            Storage.resolveAnomaly id
+            json {| status = "success" |} next ctx
+            
     let getStatsHandler : HttpHandler =
         fun next ctx -> json (Stats.getDashboardStats()) next ctx
         
@@ -66,6 +71,17 @@ module Program =
 
     let getTrendsHandler : HttpHandler =
         fun next ctx -> json (Stats.getMonthlyTrends()) next ctx
+
+    let getBudgetsHandler : HttpHandler =
+        fun next ctx -> json (Stats.getBudgetStatus()) next ctx
+
+    let postBudgetHandler : HttpHandler =
+        fun next ctx ->
+            task {
+                let! dto = ctx.BindJsonAsync<Budget>()
+                Storage.setBudget dto.Category dto.LimitAmount
+                return! json {| status = "success" |} next ctx
+            }
 
     let webApp =
         choose [
@@ -76,11 +92,16 @@ module Program =
                 route "/api/stats" >=> getStatsHandler
                 route "/api/categories" >=> getCategoriesHandler
                 route "/api/trends" >=> getTrendsHandler
+                route "/api/budgets" >=> getBudgetsHandler
             ]
             POST >=> choose [
                 route "/api/expenses" >=> postExpenseHandler
                 route "/api/expenses/import-csv" >=> importCsvHandler
                 route "/api/anomalies/run" >=> runAnomaliesHandler
+                route "/api/budgets" >=> postBudgetHandler
+            ]
+            PATCH >=> choose [
+                routef "/api/anomalies/%i/resolve" patchAnomalyHandler
             ]
         ]
 
