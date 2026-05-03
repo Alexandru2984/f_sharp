@@ -9,11 +9,39 @@ open Microsoft.AspNetCore.Http
 open Microsoft.AspNetCore.Hosting
 open Giraffe
 open Microsoft.Extensions.Logging
+open Microsoft.AspNetCore.Authentication
+open Microsoft.AspNetCore.Authentication.Cookies
+open System.Security.Claims
 
 module Program =
     let errorHandler (ex: Exception) (logger: ILogger) =
         logger.LogError(ex, "An unhandled exception has occurred while executing the request.")
         clearResponse >=> setStatusCode 500 >=> json {| error = "Internal server error" |}
+
+    let authChallenge : HttpHandler =
+        setStatusCode 401 >=> json {| error = "Unauthorized" |}
+
+    let loginHandler : HttpHandler =
+        fun next ctx ->
+            task {
+                let! dto = ctx.BindJsonAsync<LoginRequest>()
+                match Storage.getUserByUsername dto.Username with
+                | Some user when BCrypt.Net.BCrypt.Verify(dto.Password, user.PasswordHash) ->
+                    let claims = [| Claim(ClaimTypes.Name, user.Username) |]
+                    let identity = ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme)
+                    let principal = ClaimsPrincipal(identity)
+                    do! ctx.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal)
+                    return! json {| status = "success" |} next ctx
+                | _ ->
+                    return! (setStatusCode 401 >=> json {| error = "Invalid credentials" |}) next ctx
+            }
+
+    let logoutHandler : HttpHandler =
+        fun next ctx ->
+            task {
+                do! ctx.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme)
+                return! json {| status = "success" |} next ctx
+            }
 
     let getHealth : HttpHandler =
         fun next ctx -> json {| status = "OK" |} next ctx
@@ -83,16 +111,16 @@ module Program =
                 return! json {| status = "success" |} next ctx
             }
 
-    let webApp =
-        choose [
+    let apiRoutes =
+        requiresAuthentication (challenge CookieAuthenticationDefaults.AuthenticationScheme) >=> choose [
             GET >=> choose [
-                route "/health" >=> getHealth
                 route "/api/expenses" >=> getExpensesHandler
                 route "/api/anomalies" >=> getAnomaliesHandler
                 route "/api/stats" >=> getStatsHandler
                 route "/api/categories" >=> getCategoriesHandler
                 route "/api/trends" >=> getTrendsHandler
                 route "/api/budgets" >=> getBudgetsHandler
+                route "/api/me" >=> fun next ctx -> json {| username = ctx.User.Identity.Name |} next ctx
             ]
             POST >=> choose [
                 route "/api/expenses" >=> postExpenseHandler
@@ -103,6 +131,14 @@ module Program =
             PATCH >=> choose [
                 routef "/api/anomalies/%i/resolve" patchAnomalyHandler
             ]
+        ]
+
+    let webApp =
+        choose [
+            GET >=> route "/health" >=> getHealth
+            POST >=> route "/api/login" >=> loginHandler
+            POST >=> route "/api/logout" >=> logoutHandler
+            apiRoutes
         ]
 
     [<EntryPoint>]
@@ -118,10 +154,21 @@ module Program =
         ) |> ignore
 
         builder.Services.AddGiraffe() |> ignore
+        builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
+               .AddCookie(fun options -> 
+                   options.Events.OnRedirectToLogin <- fun context -> 
+                       context.Response.StatusCode <- 401
+                       System.Threading.Tasks.Task.CompletedTask
+               ) |> ignore
+        builder.Services.AddAuthorization() |> ignore
         
         let app = builder.Build()
         
         Storage.initDb()
+        Storage.seedAdmin()
+
+        app.UseAuthentication() |> ignore
+        app.UseAuthorization() |> ignore
 
         // Serve files from public folder
         let staticFileOptions = Microsoft.AspNetCore.Builder.StaticFileOptions()

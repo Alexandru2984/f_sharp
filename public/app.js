@@ -9,17 +9,28 @@ const app = {
     },
 
     async init() {
-        this.showPage('dashboard');
+        try {
+            await this.fetchAPI('/api/me');
+            this.showPage('dashboard');
+        } catch (e) {
+            this.showPage('login');
+        }
     },
 
     async fetchAPI(url, options = {}) {
         try {
             const res = await fetch(url, options);
+            if (res.status === 401 && url !== '/api/login') {
+                this.showPage('login');
+                throw new Error("Unauthorized");
+            }
             if (!res.ok) throw new Error(await res.text());
             return await res.json();
         } catch (e) {
             console.error(e);
-            alert(`Error: ${e.message}`);
+            if (e.message !== "Unauthorized") {
+                alert(`Error: ${e.message}`);
+            }
             throw e;
         }
     },
@@ -50,11 +61,17 @@ const app = {
         if (page === 'dashboard') {
             await this.loadDashboardData();
             this.renderDashboard(content);
+            document.querySelector('.links').style.display = 'block';
         } else if (page === 'import') {
             this.renderImportPage(content);
+            document.querySelector('.links').style.display = 'block';
         } else if (page === 'budgets') {
             await this.loadDashboardData();
             this.renderBudgetsPage(content);
+            document.querySelector('.links').style.display = 'block';
+        } else if (page === 'login') {
+            this.renderLoginPage(content);
+            document.querySelector('.links').style.display = 'none';
         }
     },
 
@@ -300,6 +317,52 @@ const app = {
         });
         alert('Budget saved!');
         this.showPage('budgets');
+    },
+
+    renderLoginPage(el) {
+        el.innerHTML = `
+            <div style="display:flex; justify-content:center; margin-top: 4rem;">
+                <div class="card" style="width: 100%; max-width: 400px; padding: 2rem;">
+                    <h2 style="text-align:center; margin-bottom:1.5rem; color:var(--primary-color)">Admin Login</h2>
+                    <form onsubmit="app.submitLogin(event)">
+                        <div class="form-group">
+                            <label>Username</label>
+                            <input type="text" id="l_username" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Password</label>
+                            <input type="password" id="l_password" required>
+                        </div>
+                        <button type="submit" class="btn" style="width:100%; margin-top:1rem;">Login</button>
+                    </form>
+                </div>
+            </div>
+        `;
+    },
+
+    async submitLogin(e) {
+        e.preventDefault();
+        const data = {
+            username: document.getElementById('l_username').value,
+            password: document.getElementById('l_password').value
+        };
+        try {
+            await fetch('/api/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            }).then(async r => {
+                if(!r.ok) throw new Error(await r.text());
+            });
+            await this.init();
+        } catch (err) {
+            alert('Login failed. Please check credentials.');
+        }
+    },
+
+    async logout() {
+        await fetch('/api/logout', { method: 'POST' });
+        this.showPage('login');
     }
 };
 

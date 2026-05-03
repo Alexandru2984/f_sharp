@@ -32,6 +32,19 @@ type Budget = {
     LimitAmount : decimal
 }
 
+[<CLIMutable>]
+type User = {
+    Id : int
+    Username : string
+    PasswordHash : string
+    CreatedAt : DateTime
+}
+
+type LoginRequest = {
+    Username : string
+    Password : string
+}
+
 type ImportResult = {
     ImportedRows : int
     SkippedRows : int

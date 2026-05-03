@@ -37,6 +37,12 @@ module Storage =
                 Category TEXT PRIMARY KEY,
                 LimitAmount DECIMAL NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS Users (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                Username TEXT UNIQUE NOT NULL,
+                PasswordHash TEXT NOT NULL,
+                CreatedAt DATETIME NOT NULL
+            );
         """
         cmd.ExecuteNonQuery() |> ignore
 
@@ -90,3 +96,15 @@ module Storage =
     let getBudgets () =
         use conn = new SqliteConnection(connectionString)
         conn.Query<Budget>("SELECT * FROM Budgets") |> List.ofSeq
+
+    let getUserByUsername (username: string) =
+        use conn = new SqliteConnection(connectionString)
+        conn.Query<User>("SELECT * FROM Users WHERE Username = @Username", {| Username = username |}) |> Seq.tryHead
+
+    let seedAdmin () =
+        use conn = new SqliteConnection(connectionString)
+        let adminCount = conn.QuerySingle<int>("SELECT COUNT(*) FROM Users WHERE Username = 'admin'")
+        if adminCount = 0 then
+            let hash = BCrypt.Net.BCrypt.HashPassword("admin123")
+            let sql = "INSERT INTO Users (Username, PasswordHash, CreatedAt) VALUES (@Username, @PasswordHash, @CreatedAt)"
+            conn.Execute(sql, {| Username = "admin"; PasswordHash = hash; CreatedAt = DateTime.UtcNow |}) |> ignore
