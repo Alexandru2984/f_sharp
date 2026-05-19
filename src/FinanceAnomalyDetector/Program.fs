@@ -139,7 +139,7 @@ module Program =
             }
 
     let apiRoutes =
-        requiresAuthentication (challenge CookieAuthenticationDefaults.AuthenticationScheme) >=> choose [
+        requiresAuthentication authChallenge >=> choose [
             GET >=> choose [
                 route "/api/expenses" >=> getExpensesHandler
                 route "/api/anomalies" >=> getAnomaliesHandler
