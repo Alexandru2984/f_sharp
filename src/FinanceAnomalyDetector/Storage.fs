@@ -119,13 +119,63 @@ module Storage =
         tx.Commit()
         expenses.Length
 
-    let getExpenses userId =
-        use conn = new SqliteConnection(connectionString)
-        conn.Query<Expense>("SELECT * FROM Expenses WHERE UserId = @UserId ORDER BY Date DESC LIMIT 100", {| UserId = userId |}) |> List.ofSeq
-
     let getAllExpenses userId =
         use conn = new SqliteConnection(connectionString)
         conn.Query<Expense>("SELECT * FROM Expenses WHERE UserId = @UserId", {| UserId = userId |}) |> List.ofSeq
+
+    let getExpenseById userId (id: int) =
+        use conn = new SqliteConnection(connectionString)
+        conn.Query<Expense>("SELECT * FROM Expenses WHERE UserId = @UserId AND Id = @Id", {| UserId = userId; Id = id |}) |> Seq.tryHead
+
+    /// Paginated, filtered expense listing. Filters are combined with AND;
+    /// search matches merchant or description as a substring.
+    let queryExpenses userId (query: ExpenseQuery) =
+        use conn = new SqliteConnection(connectionString)
+        let conditions = System.Text.StringBuilder("WHERE UserId = @UserId")
+        let parameters = DynamicParameters()
+        parameters.Add("UserId", userId)
+        query.Category |> Option.iter (fun c ->
+            conditions.Append(" AND Category = @Category") |> ignore
+            parameters.Add("Category", c))
+        query.Search |> Option.iter (fun s ->
+            conditions.Append(" AND (Merchant LIKE @Search OR Description LIKE @Search)") |> ignore
+            parameters.Add("Search", "%" + s + "%"))
+        query.From |> Option.iter (fun f ->
+            conditions.Append(" AND Date >= @From") |> ignore
+            parameters.Add("From", f))
+        query.To |> Option.iter (fun t ->
+            conditions.Append(" AND Date < @To") |> ignore
+            parameters.Add("To", t))
+        let whereClause = conditions.ToString()
+        let total = conn.QuerySingle<int>(sprintf "SELECT COUNT(*) FROM Expenses %s" whereClause, parameters)
+        parameters.Add("Limit", query.PageSize)
+        parameters.Add("Offset", (query.Page - 1) * query.PageSize)
+        let items =
+            conn.Query<Expense>(
+                sprintf "SELECT * FROM Expenses %s ORDER BY Date DESC, Id DESC LIMIT @Limit OFFSET @Offset" whereClause,
+                parameters)
+            |> List.ofSeq
+        { Items = items; Total = total; Page = query.Page; PageSize = query.PageSize }
+
+    let updateExpense userId (id: int) (expense: ExpenseDto) =
+        use conn = new SqliteConnection(connectionString)
+        let sql = """
+            UPDATE Expenses
+            SET Amount = @Amount, Currency = @Currency, Category = @Category,
+                Merchant = @Merchant, Description = @Description, Date = @Date
+            WHERE Id = @Id AND UserId = @UserId
+        """
+        conn.Execute(sql, {| Id = id; UserId = userId; Amount = expense.Amount; Currency = expense.Currency; Category = expense.Category; Merchant = expense.Merchant; Description = expense.Description; Date = expense.Date |}) > 0
+
+    /// Deletes an expense together with its anomalies in one transaction.
+    let deleteExpense userId (id: int) =
+        use conn = new SqliteConnection(connectionString)
+        conn.Open()
+        use tx = conn.BeginTransaction()
+        conn.Execute("DELETE FROM Anomalies WHERE UserId = @UserId AND ExpenseId = @Id", {| UserId = userId; Id = id |}, tx) |> ignore
+        let affected = conn.Execute("DELETE FROM Expenses WHERE UserId = @UserId AND Id = @Id", {| UserId = userId; Id = id |}, tx)
+        tx.Commit()
+        affected > 0
 
     let private insertAnomalySql = """
         INSERT INTO Anomalies (UserId, ExpenseId, RuleCode, Score, Severity, Reason, Recommendation, DetectedAt, IsResolved)
@@ -155,7 +205,7 @@ module Storage =
     let resolveAnomaly userId (id: int) =
         use conn = new SqliteConnection(connectionString)
         let sql = "UPDATE Anomalies SET IsResolved = 1 WHERE Id = @Id AND UserId = @UserId"
-        conn.Execute(sql, {| Id = id; UserId = userId |}) |> ignore
+        conn.Execute(sql, {| Id = id; UserId = userId |}) > 0
 
     let getAnomalies userId =
         use conn = new SqliteConnection(connectionString)
@@ -166,6 +216,10 @@ module Storage =
         let sql = "INSERT OR REPLACE INTO Budgets (UserId, Category, LimitAmount) VALUES (@UserId, @Category, @LimitAmount)"
         conn.Execute(sql, {| UserId = userId; Category = category; LimitAmount = limit |}) |> ignore
 
+    let deleteBudget userId (category: string) =
+        use conn = new SqliteConnection(connectionString)
+        conn.Execute("DELETE FROM Budgets WHERE UserId = @UserId AND Category = @Category", {| UserId = userId; Category = category |}) > 0
+
     let getBudgets userId =
         use conn = new SqliteConnection(connectionString)
         conn.Query<Budget>("SELECT * FROM Budgets WHERE UserId = @UserId", {| UserId = userId |}) |> List.ofSeq
@@ -173,6 +227,14 @@ module Storage =
     let getUserByUsername (username: string) =
         use conn = new SqliteConnection(connectionString)
         conn.Query<User>("SELECT * FROM Users WHERE Username = @Username", {| Username = username |}) |> Seq.tryHead
+
+    let getUserById (id: int) =
+        use conn = new SqliteConnection(connectionString)
+        conn.Query<User>("SELECT * FROM Users WHERE Id = @Id", {| Id = id |}) |> Seq.tryHead
+
+    let updatePassword userId (passwordHash: string) =
+        use conn = new SqliteConnection(connectionString)
+        conn.Execute("UPDATE Users SET PasswordHash = @PasswordHash WHERE Id = @Id", {| Id = userId; PasswordHash = passwordHash |}) > 0
 
     let createUser (username: string) (passwordHash: string) =
         use conn = new SqliteConnection(connectionString)

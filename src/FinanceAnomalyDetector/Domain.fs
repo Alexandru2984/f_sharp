@@ -63,3 +63,24 @@ type ExpenseDto = {
     Description : string
     Date : DateTime
 }
+
+type ExpenseQuery = {
+    Page : int
+    PageSize : int
+    Category : string option
+    Search : string option
+    From : DateTime option
+    To : DateTime option
+}
+
+type ExpensePage = {
+    Items : Expense list
+    Total : int
+    Page : int
+    PageSize : int
+}
+
+type ChangePasswordRequest = {
+    OldPassword : string
+    NewPassword : string
+}

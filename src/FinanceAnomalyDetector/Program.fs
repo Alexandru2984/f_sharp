@@ -95,8 +95,119 @@ module Program =
     let getHealth : HttpHandler =
         fun next ctx -> json {| status = "OK" |} next ctx
         
+    let private tryParseDate (value: string) =
+        match DateTime.TryParse(value, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None) with
+        | true, d -> Some d
+        | _ -> None
+
     let getExpensesHandler : HttpHandler =
-        fun next ctx -> json (Storage.getExpenses (getUserId ctx)) next ctx
+        fun next ctx ->
+            let queryInt name fallback =
+                match ctx.TryGetQueryStringValue name with
+                | Some v -> match Int32.TryParse(v: string) with | true, i -> i | _ -> fallback
+                | None -> fallback
+            let queryDate name = ctx.TryGetQueryStringValue name |> Option.bind tryParseDate
+            let query = {
+                Page = max 1 (queryInt "page" 1)
+                PageSize = queryInt "pageSize" 50 |> max 1 |> min 200
+                Category = ctx.TryGetQueryStringValue "category" |> Option.filter (String.IsNullOrWhiteSpace >> not)
+                Search = ctx.TryGetQueryStringValue "search" |> Option.filter (String.IsNullOrWhiteSpace >> not)
+                From = queryDate "from"
+                // A bare date upper bound is exclusive of the next day, so
+                // "to=2026-07-01" includes the whole of July 1st.
+                To = queryDate "to" |> Option.map (fun t -> if t.TimeOfDay = TimeSpan.Zero then t.AddDays(1.0) else t)
+            }
+            json (Storage.queryExpenses (getUserId ctx) query) next ctx
+
+    let putExpenseHandler (id: int) : HttpHandler =
+        fun next ctx ->
+            task {
+                match! tryBindJson<ExpenseDto> ctx with
+                | Error msg -> return! badRequest msg next ctx
+                | Ok dto ->
+                    match Validation.validateExpense dto with
+                    | Error errors ->
+                        return! (setStatusCode 400 >=> json {| errors = errors |}) next ctx
+                    | Ok validDto ->
+                        if Storage.updateExpense (getUserId ctx) id validDto then
+                            match Storage.getExpenseById (getUserId ctx) id with
+                            | Some exp -> return! json exp next ctx
+                            | None -> return! (setStatusCode 404 >=> json {| error = "Expense not found" |}) next ctx
+                        else
+                            return! (setStatusCode 404 >=> json {| error = "Expense not found" |}) next ctx
+            }
+
+    let deleteExpenseHandler (id: int) : HttpHandler =
+        fun next ctx ->
+            if Storage.deleteExpense (getUserId ctx) id then
+                json {| status = "success" |} next ctx
+            else
+                (setStatusCode 404 >=> json {| error = "Expense not found" |}) next ctx
+
+    /// Escapes a CSV field per RFC 4180.
+    let private csvField (value: string) =
+        let value = if isNull value then "" else value
+        if value.Contains(",") || value.Contains("\"") || value.Contains("\n") || value.Contains("\r") then
+            "\"" + value.Replace("\"", "\"\"") + "\""
+        else value
+
+    let exportCsvHandler : HttpHandler =
+        fun next ctx ->
+            let expenses =
+                Storage.getAllExpenses (getUserId ctx)
+                |> List.sortByDescending (fun e -> e.Date)
+            let sb = System.Text.StringBuilder()
+            sb.AppendLine("Date,Amount,Currency,Category,Merchant,Description") |> ignore
+            for e in expenses do
+                sb.AppendLine(
+                    String.Join(",",
+                        e.Date.ToString("yyyy-MM-ddTHH:mm:ss"),
+                        e.Amount.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        csvField e.Currency,
+                        csvField e.Category,
+                        csvField e.Merchant,
+                        csvField e.Description)) |> ignore
+            ctx.SetHttpHeader("Content-Disposition", "attachment; filename=\"expenses.csv\"")
+            (setContentType "text/csv; charset=utf-8" >=> setBodyFromString (sb.ToString())) next ctx
+
+    let getRecurringHandler : HttpHandler =
+        fun next ctx -> json (Recurring.detect (Storage.getAllExpenses (getUserId ctx))) next ctx
+
+    let getMonthlyReportHandler : HttpHandler =
+        fun next ctx ->
+            let month =
+                match ctx.TryGetQueryStringValue "month" with
+                | Some m when not (String.IsNullOrWhiteSpace m) -> m
+                | _ -> DateTime.UtcNow.ToString("yyyy-MM")
+            if System.Text.RegularExpressions.Regex.IsMatch(month, @"^\d{4}-(0[1-9]|1[0-2])$") then
+                json (Stats.getMonthlyReport (getUserId ctx) month) next ctx
+            else
+                badRequest "month must have the format yyyy-MM" next ctx
+
+    let deleteBudgetHandler (category: string) : HttpHandler =
+        fun next ctx ->
+            if Storage.deleteBudget (getUserId ctx) category then
+                json {| status = "success" |} next ctx
+            else
+                (setStatusCode 404 >=> json {| error = "Budget not found" |}) next ctx
+
+    let changePasswordHandler : HttpHandler =
+        fun next ctx ->
+            task {
+                match! tryBindJson<ChangePasswordRequest> ctx with
+                | Error msg -> return! badRequest msg next ctx
+                | Ok dto ->
+                    match Storage.getUserById (getUserId ctx) with
+                    | Some user when BCrypt.Net.BCrypt.Verify(dto.OldPassword, user.PasswordHash) ->
+                        match Validation.validatePassword dto.NewPassword with
+                        | Error errors ->
+                            return! (setStatusCode 400 >=> json {| errors = errors |}) next ctx
+                        | Ok () ->
+                            Storage.updatePassword user.Id (BCrypt.Net.BCrypt.HashPassword(dto.NewPassword)) |> ignore
+                            return! json {| status = "success" |} next ctx
+                    | _ ->
+                        return! (setStatusCode 400 >=> json {| error = "Current password is incorrect" |}) next ctx
+            }
         
     let postExpenseHandler : HttpHandler =
         fun next ctx ->
@@ -149,8 +260,10 @@ module Program =
             
     let patchAnomalyHandler (id: int) : HttpHandler =
         fun next ctx ->
-            Storage.resolveAnomaly (getUserId ctx) id
-            json {| status = "success" |} next ctx
+            if Storage.resolveAnomaly (getUserId ctx) id then
+                json {| status = "success" |} next ctx
+            else
+                (setStatusCode 404 >=> json {| error = "Anomaly not found" |}) next ctx
             
     let getStatsHandler : HttpHandler =
         fun next ctx -> json (Stats.getDashboardStats (getUserId ctx)) next ctx
@@ -183,11 +296,14 @@ module Program =
         requiresAuthentication authChallenge >=> choose [
             GET >=> choose [
                 route "/api/expenses" >=> getExpensesHandler
+                route "/api/expenses/export" >=> exportCsvHandler
                 route "/api/anomalies" >=> getAnomaliesHandler
+                route "/api/recurring" >=> getRecurringHandler
                 route "/api/stats" >=> getStatsHandler
                 route "/api/categories" >=> getCategoriesHandler
                 route "/api/trends" >=> getTrendsHandler
                 route "/api/budgets" >=> getBudgetsHandler
+                route "/api/reports/monthly" >=> getMonthlyReportHandler
                 route "/api/me" >=> fun next ctx -> json {| username = ctx.User.Identity.Name |} next ctx
             ]
             POST >=> choose [
@@ -195,6 +311,14 @@ module Program =
                 route "/api/expenses/import-csv" >=> importCsvHandler
                 route "/api/anomalies/run" >=> runAnomaliesHandler
                 route "/api/budgets" >=> postBudgetHandler
+                route "/api/account/change-password" >=> changePasswordHandler
+            ]
+            PUT >=> choose [
+                routef "/api/expenses/%i" putExpenseHandler
+            ]
+            DELETE >=> choose [
+                routef "/api/expenses/%i" deleteExpenseHandler
+                routef "/api/budgets/%s" deleteBudgetHandler
             ]
             PATCH >=> choose [
                 routef "/api/anomalies/%i/resolve" patchAnomalyHandler
