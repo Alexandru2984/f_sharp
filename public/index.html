@@ -5,23 +5,30 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>F# Finance Anomaly Detector</title>
     <link rel="stylesheet" href="/styles.css">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="/vendor/chart.umd.min.js"></script>
 </head>
 <body>
     <nav class="navbar">
         <div class="container nav-container">
             <div class="logo">Finance Anomaly Detector</div>
             <div class="links">
-                <a href="#" onclick="app.showPage('dashboard')">Dashboard</a>
-                <a href="#" onclick="app.showPage('import')">Add Data</a>
+                <a href="#" data-page="dashboard">Dashboard</a>
+                <a href="#" data-page="expenses">Expenses</a>
+                <a href="#" data-page="import">Add Data</a>
+                <a href="#" data-page="reports">Reports</a>
+                <a href="#" data-page="account">Account</a>
                 <a href="/docs.html">Docs</a>
-                <a href="#" onclick="app.logout()" style="color: var(--error-color)">Logout</a>
+                <a href="#" data-action="logout" class="logout-link">Logout</a>
             </div>
         </div>
     </nav>
     <main class="container" id="app-content">
-        <!-- Content will be rendered here by JS -->
+        <!-- Content rendered by app.js -->
     </main>
+    <div id="modal-backdrop" class="modal-backdrop hidden">
+        <div class="modal" id="modal"></div>
+    </div>
+    <div id="toast-container"></div>
     <script src="/app.js"></script>
 </body>
 </html>

@@ -421,13 +421,16 @@ module Program =
         app.UseAuthentication() |> ignore
         app.UseAuthorization() |> ignore
 
-        // Map friendly routes to static documents before the static file middleware runs.
+        // Map friendly routes to static documents before the static file middleware
+        // runs, and attach a strict CSP (all scripts and styles are self-hosted).
         app.Use(fun (context: HttpContext) (next: RequestDelegate) ->
             task {
                 if context.Request.Path.Value = "/" then
                     context.Request.Path <- PathString("/index.html")
                 if context.Request.Path.Value = "/docs" then
                     context.Request.Path <- PathString("/docs.html")
+                context.Response.Headers.ContentSecurityPolicy <-
+                    "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'self'"
                 return! next.Invoke(context)
             } :> System.Threading.Tasks.Task
         ) |> ignore

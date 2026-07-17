@@ -121,3 +121,98 @@ th { color: var(--text-secondary); font-weight: 500; }
     background-color: var(--error-color);
 }
 
+.links a.active { color: var(--primary-color); }
+.links a.logout-link { color: var(--error-color); }
+
+.btn-outline {
+    background-color: transparent;
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+}
+
+.btn-danger {
+    background-color: transparent;
+    color: var(--error-color);
+    border: 1px solid var(--error-color);
+}
+
+.btn:disabled { opacity: 0.4; cursor: default; }
+
+a.btn { display: inline-block; text-decoration: none; }
+
+.badge.rule { background-color: rgba(187, 134, 252, 0.2); color: var(--primary-color); }
+
+.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin-top: 2rem; align-items: start; }
+@media (max-width: 800px) { .two-col { grid-template-columns: 1fr; } }
+
+.filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+    padding: 1rem;
+    align-items: center;
+}
+.filter-bar input, .filter-bar select {
+    padding: 0.6rem;
+    background-color: var(--bg-color);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    border-radius: 4px;
+}
+.filter-bar input[name="search"] { flex: 1; min-width: 180px; }
+
+.pagination {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    justify-content: center;
+    margin-bottom: 2rem;
+    color: var(--text-secondary);
+}
+
+.modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+}
+.modal-backdrop.hidden { display: none; }
+.modal {
+    background-color: var(--surface-color);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 2rem;
+    width: 100%;
+    max-width: 440px;
+    max-height: 90vh;
+    overflow-y: auto;
+}
+.modal h3 { margin-bottom: 1rem; color: var(--primary-color); }
+
+#toast-container {
+    position: fixed;
+    bottom: 1.5rem;
+    right: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    z-index: 200;
+}
+.toast {
+    padding: 0.75rem 1.25rem;
+    border-radius: 6px;
+    background-color: var(--surface-color);
+    border: 1px solid var(--success-color);
+    color: var(--text-primary);
+    opacity: 0;
+    transform: translateY(10px);
+    transition: opacity 0.3s, transform 0.3s;
+    max-width: 340px;
+}
+.toast.visible { opacity: 1; transform: translateY(0); }
+.toast.error { border-color: var(--error-color); }
+
