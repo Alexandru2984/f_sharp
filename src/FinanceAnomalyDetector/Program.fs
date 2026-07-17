@@ -204,6 +204,19 @@ module Program =
             else
                 (setStatusCode 404 >=> json {| error = "Budget not found" |}) next ctx
 
+    let loadDemoDataHandler : HttpHandler =
+        fun next ctx ->
+            let userId = getUserId ctx
+            if not (List.isEmpty (Storage.getAllExpenses userId)) then
+                (setStatusCode 409 >=> json {| error = "Demo data can only be loaded into an empty account" |}) next ctx
+            else
+                let expenses = DemoData.generate userId DateTime.UtcNow
+                let inserted = Storage.insertExpenses userId expenses
+                for category, limit in DemoData.budgets do
+                    Storage.setBudget userId category limit
+                let anomalies = AnomalyEngine.runAll userId
+                json {| expenses = inserted; budgets = List.length DemoData.budgets; anomalies = anomalies |} next ctx
+
     let changePasswordHandler : HttpHandler =
         fun next ctx ->
             task {
@@ -330,6 +343,7 @@ module Program =
                 route "/api/expenses/import-csv" >=> importCsvHandler
                 route "/api/anomalies/run" >=> runAnomaliesHandler
                 route "/api/budgets" >=> postBudgetHandler
+                route "/api/demo-data" >=> loadDemoDataHandler
                 route "/api/account/change-password" >=> changePasswordHandler
             ]
             PUT >=> choose [

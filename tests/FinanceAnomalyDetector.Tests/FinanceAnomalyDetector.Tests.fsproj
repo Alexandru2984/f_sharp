@@ -12,6 +12,7 @@
     <Compile Include="AnomalyRulesTests.fs" />
     <Compile Include="CsvImportTests.fs" />
     <Compile Include="StatsTests.fs" />
+    <Compile Include="DemoDataTests.fs" />
     <Compile Include="StorageEngineTests.fs" />
   </ItemGroup>
 

@@ -188,6 +188,14 @@ const app = {
 
     // ---- actions ----
 
+    async loadDemoData() {
+        await this.guard(async () => {
+            const res = await this.fetchAPI('/api/demo-data', { method: 'POST' });
+            this.toast(`Loaded ${res.expenses} expenses, ${res.budgets} budgets — ${res.anomalies} anomalies detected.`);
+            await this.showPage('dashboard');
+        });
+    },
+
     async runAnomalyEngine() {
         await this.guard(async () => {
             const res = await this.fetchAPI('/api/anomalies/run', { method: 'POST' });
@@ -377,6 +385,26 @@ const app = {
 
     renderDashboard(el) {
         const { stats, anomalies, expensePage, categories, trends, budgets } = this.state;
+
+        if (expensePage.total === 0) {
+            el.innerHTML = `
+                <div style="display:flex; justify-content:center; margin-top:3rem;">
+                    <div class="card" style="max-width:560px; text-align:center; padding:2.5rem;">
+                        <h2 style="color:var(--primary-color); margin-bottom:1rem;">Welcome 👋</h2>
+                        <p style="color:var(--text-secondary); margin-bottom:1.5rem;">
+                            Your account is empty. Load a realistic sample dataset — five months of
+                            spending with subscriptions, a duplicate charge, a night purchase and a
+                            price hike for the anomaly engine to find — or start adding your own data.
+                        </p>
+                        <div style="display:flex; gap:1rem; justify-content:center;">
+                            <button class="btn" data-action="load-demo">Load demo data</button>
+                            <button class="btn btn-outline" data-page="import">Add my own</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            return;
+        }
 
         el.innerHTML = `
             <div class="flex-between">
@@ -769,6 +797,7 @@ document.addEventListener('click', e => {
     const id = parseInt(actionEl.dataset.id, 10);
     switch (actionEl.dataset.action) {
         case 'logout': app.logout(); break;
+        case 'load-demo': app.loadDemoData(); break;
         case 'run-engine': app.runAnomalyEngine(); break;
         case 'resolve-anomaly': app.resolveAnomaly(id); break;
         case 'edit-expense': app.openEditModal(id); break;

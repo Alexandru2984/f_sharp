@@ -13,6 +13,7 @@
     <Compile Include="AnomalyEngine.fs" />
     <Compile Include="CsvImport.fs" />
     <Compile Include="Stats.fs" />
+    <Compile Include="DemoData.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 
