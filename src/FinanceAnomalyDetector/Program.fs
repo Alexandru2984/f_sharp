@@ -39,6 +39,13 @@ module Program =
     let badRequest (message: string) : HttpHandler =
         setStatusCode 400 >=> json {| error = message |}
 
+    /// Kicks off anomaly detection in the background after a data change.
+    let scheduleDetection (ctx: HttpContext) =
+        let logger = ctx.GetLogger("AnomalyEngine")
+        AnomalyEngine.triggerBackgroundRun
+            (fun ex -> logger.LogError(ex, "Background anomaly detection failed"))
+            (getUserId ctx)
+
     let signInUser (ctx: HttpContext) (user: User) =
         let claims = [|
             Claim(ClaimTypes.Name, user.Username)
@@ -134,7 +141,9 @@ module Program =
                     | Ok validDto ->
                         if Storage.updateExpense (getUserId ctx) id validDto then
                             match Storage.getExpenseById (getUserId ctx) id with
-                            | Some exp -> return! json exp next ctx
+                            | Some exp ->
+                                scheduleDetection ctx
+                                return! json exp next ctx
                             | None -> return! (setStatusCode 404 >=> json {| error = "Expense not found" |}) next ctx
                         else
                             return! (setStatusCode 404 >=> json {| error = "Expense not found" |}) next ctx
@@ -143,6 +152,7 @@ module Program =
     let deleteExpenseHandler (id: int) : HttpHandler =
         fun next ctx ->
             if Storage.deleteExpense (getUserId ctx) id then
+                scheduleDetection ctx
                 json {| status = "success" |} next ctx
             else
                 (setStatusCode 404 >=> json {| error = "Expense not found" |}) next ctx
@@ -221,6 +231,7 @@ module Program =
                     match Validation.validateExpense dto with
                     | Ok validDto ->
                         let exp = Storage.insertExpense (getUserId ctx) validDto
+                        scheduleDetection ctx
                         return! json exp next ctx
                     | Error errors ->
                         return! (setStatusCode 400 >=> json {| errors = errors |}) next ctx
@@ -247,6 +258,7 @@ module Program =
                         try
                             let parsed = CsvImport.parseCsv reader
                             let imported = Storage.insertExpenses (getUserId ctx) parsed.Valid
+                            if imported > 0 then scheduleDetection ctx
                             let result = { ImportedRows = imported; SkippedRows = parsed.Skipped; ValidationErrors = parsed.Errors }
                             return! json result next ctx
                         with :? CsvHelper.CsvHelperException ->

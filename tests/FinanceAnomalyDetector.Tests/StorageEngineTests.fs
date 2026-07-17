@@ -107,11 +107,16 @@ let ``engine detects the seeded scenarios end to end`` () =
     Storage.insertExpense userId (mkDto 42.5m "Food" "KFC" (DateTime(2026, 6, 10, 13, 4, 0))) |> ignore
     // night purchase
     Storage.insertExpense userId (mkDto 99m "Other" "Bar" (DateTime(2026, 6, 11, 2, 30, 0))) |> ignore
+    // stable subscription, then a price hike
+    for month in 3..5 do
+        Storage.insertExpense userId (mkDto 15.99m "Entertainment" "Netflix" (DateTime(2026, month, 5, 10, 0, 0))) |> ignore
+    Storage.insertExpense userId (mkDto 19.99m "Entertainment" "Netflix" (DateTime(2026, 6, 5, 10, 0, 0))) |> ignore
     let detected = AnomalyEngine.runAll userId
     let anomalies = Storage.getAnomalies userId
     Assert.Equal(detected, anomalies.Length)
     Assert.Contains(anomalies, fun a -> a.RuleCode = "DUPLICATE")
     Assert.Contains(anomalies, fun a -> a.RuleCode = "NIGHT")
+    Assert.Contains(anomalies, fun a -> a.RuleCode = "SUB_HIKE")
 
 [<Fact>]
 let ``resolved anomalies are never resurrected by a re-run`` () =
