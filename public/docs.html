@@ -18,7 +18,9 @@
     </nav>
     <main class="container" style="padding: 2rem 0;">
         <h1>API Documentation</h1>
-        <p>All <code>/api</code> endpoints except login/register require an authenticated cookie session. Unauthenticated requests receive <code>401</code>.</p>
+        <p>All <code>/api</code> endpoints except login/register require an authenticated cookie session. Unauthenticated requests receive <code>401</code>.
+           A machine-readable spec is available at <a href="/openapi.yaml">/openapi.yaml</a>.</p>
+        <p style="color: var(--text-secondary);">Creating, updating, deleting or importing expenses automatically re-runs anomaly detection in the background — no manual trigger needed.</p>
 
         <h2 style="margin-top: 2rem;">Auth</h2>
 
@@ -82,10 +84,16 @@
         <h2 style="margin-top: 2rem;">Insights</h2>
 
         <h3>GET /api/stats &nbsp;/&nbsp; /api/categories &nbsp;/&nbsp; /api/trends</h3>
-        <p>Dashboard aggregates: headline stats, per-category totals, monthly trend series.</p>
+        <p>Dashboard aggregates: headline stats, per-category totals, monthly trend series. All accept <code>?currency=</code>; money totals never mix currencies and default to your most used one.</p>
+
+        <h3>GET /api/currencies</h3>
+        <p>Transaction count and total per currency, most used first.</p>
 
         <h3>GET /api/reports/monthly?month=yyyy-MM</h3>
-        <p>Monthly report: total, transaction count, previous-month comparison, per-category share, top 5 merchants, anomaly count. Defaults to the current month.</p>
+        <p>Monthly report: total, transaction count, previous-month comparison, per-category share, top 5 merchants, anomaly count. Defaults to the current month; accepts <code>?currency=</code>.</p>
+
+        <h3>POST /api/demo-data</h3>
+        <p>Seeds a five-month sample dataset (subscriptions with a price hike, a duplicate charge, a night purchase, an outlier, a EUR trip) plus three budgets, then runs detection. Only works on an empty account; returns <code>409</code> otherwise.</p>
 
         <h3>GET /api/recurring</h3>
         <p>Detected recurring charges: merchant, dominant category, average amount, occurrences, months active.</p>

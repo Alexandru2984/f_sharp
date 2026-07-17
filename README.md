@@ -22,11 +22,18 @@ late-night transactions. The frontend is a dependency-free vanilla JS SPA
   | `NIGHT` | transactions between 1 AM and 4 AM |
 
   Dismissed anomalies are remembered per `(expense, rule)` pair and never
-  resurrected by later runs.
+  resurrected by later runs. Detection re-runs automatically in the
+  background after every data change, and the engine is near-linear:
+  a 10,000-expense run takes ~1.5s end to end.
 - **Recurring charge detection** — subscriptions/rent/utilities identified by
   amount stability across 3+ distinct months.
+- **Multi-currency** — money aggregates never mix currencies; every stats
+  endpoint takes `?currency=` (defaulting to the most used one) and the UI
+  offers a selector when more than one currency exists.
 - **Monthly reports** — per-category shares, top merchants, month-over-month
   change, anomaly counts.
+- **One-click demo data** — empty accounts can seed a realistic five-month
+  dataset that exercises every detection rule.
 - **Budgets** — per-category monthly limits with live progress.
 - **Expense management** — paginated + filtered listing (search, category,
   date range), inline editing, CSV import (10k rows / 5 MB cap, transactional)
@@ -99,7 +106,8 @@ enforced foreign keys, covering indexes).
 ## API
 
 Full endpoint documentation lives at [`/docs`](public/docs.html) on the
-running app. Summary:
+running app, with an OpenAPI 3 spec at [`/openapi.yaml`](public/openapi.yaml).
+Summary:
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -114,8 +122,10 @@ running app. Summary:
 | POST | `/api/anomalies/run` | run the detection engine |
 | PATCH | `/api/anomalies/{id}/resolve` | dismiss an anomaly |
 | GET | `/api/recurring` | detected recurring charges |
-| GET | `/api/stats`, `/api/categories`, `/api/trends` | dashboard aggregates |
-| GET | `/api/reports/monthly?month=yyyy-MM` | monthly report |
+| GET | `/api/currencies` | per-currency counts and totals |
+| GET | `/api/stats`, `/api/categories`, `/api/trends` | dashboard aggregates (`?currency=`) |
+| GET | `/api/reports/monthly?month=yyyy-MM` | monthly report (`?currency=`) |
+| POST | `/api/demo-data` | seed sample data (empty accounts only) |
 | GET / POST | `/api/budgets` | list / upsert budgets |
 | DELETE | `/api/budgets/{category}` | remove a budget |
 | POST | `/api/account/change-password` | change password |
@@ -130,6 +140,10 @@ The reference deployment runs the published app under systemd behind nginx
 dotnet publish src/FinanceAnomalyDetector/FinanceAnomalyDetector.fsproj -c Release -o publish
 sudo systemctl restart finance-anomaly-detector
 ```
+
+Daily database backups: `scripts/backup_db.sh` takes a consistent snapshot
+via `sqlite3 .backup` (safe under WAL with live writers), gzips it and keeps
+the newest 14 archives — wired to cron at 03:45.
 
 Security notes:
 - passwords hashed with BCrypt; sessions via HttpOnly/Secure/SameSite=Strict cookies

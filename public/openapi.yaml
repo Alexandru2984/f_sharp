@@ -1,0 +1,233 @@
+openapi: "3.0.3"
+info:
+  title: Finance Anomaly Detector API
+  description: >
+    Multi-tenant expense tracking with rule-based anomaly detection.
+    Authentication uses HttpOnly session cookies; all /api routes except
+    register/login require a session. Data-changing endpoints re-run
+    anomaly detection automatically in the background.
+  version: "2.0"
+servers:
+  - url: https://f.micutu.com
+paths:
+  /health:
+    get:
+      summary: Liveness probe
+      security: []
+      responses:
+        "200": { description: OK }
+  /api/register:
+    post:
+      summary: Create an account and sign in
+      security: []
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Credentials" }
+      responses:
+        "200": { description: Signed in }
+        "400": { description: Validation errors or username taken }
+        "429": { description: Rate limited (10/min per IP) }
+  /api/login:
+    post:
+      summary: Sign in
+      security: []
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Credentials" }
+      responses:
+        "200": { description: Signed in }
+        "401": { description: Invalid credentials }
+        "429": { description: Rate limited (10/min per IP) }
+  /api/logout:
+    post:
+      summary: Sign out
+      responses:
+        "200": { description: Signed out }
+  /api/me:
+    get:
+      summary: Current user
+      responses:
+        "200": { description: "{ username }" }
+  /api/account/change-password:
+    post:
+      summary: Change password (verifies the current one)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                oldPassword: { type: string }
+                newPassword: { type: string, minLength: 8, maxLength: 128 }
+      responses:
+        "200": { description: Changed }
+        "400": { description: Wrong current password or weak new one }
+  /api/expenses:
+    get:
+      summary: Paginated expense listing
+      parameters:
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: pageSize, in: query, schema: { type: integer, default: 50, maximum: 200 } }
+        - { name: category, in: query, schema: { type: string } }
+        - { name: search, in: query, description: Merchant/description substring, schema: { type: string } }
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, description: Inclusive when a bare date, schema: { type: string, format: date } }
+      responses:
+        "200": { description: "{ items, total, page, pageSize }" }
+    post:
+      summary: Create an expense (triggers background detection)
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExpenseInput" }
+      responses:
+        "200": { description: Created expense }
+        "400": { description: Validation errors }
+  /api/expenses/{id}:
+    put:
+      summary: Update an owned expense (triggers background detection)
+      parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExpenseInput" }
+      responses:
+        "200": { description: Updated expense }
+        "404": { description: Not found / not owned }
+    delete:
+      summary: Delete an owned expense and its anomalies
+      parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+      responses:
+        "200": { description: Deleted }
+        "404": { description: Not found / not owned }
+  /api/expenses/import-csv:
+    post:
+      summary: Bulk import (multipart file; 5 MB / 10k rows max)
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        "200": { description: "{ importedRows, skippedRows, validationErrors }" }
+        "400": { description: Missing/oversized/unparseable file }
+  /api/expenses/export:
+    get:
+      summary: Download all expenses as CSV
+      responses:
+        "200": { description: RFC 4180 CSV attachment }
+  /api/anomalies:
+    get:
+      summary: Open anomalies, newest first
+      responses:
+        "200": { description: Anomaly array with ruleCode/score/severity }
+  /api/anomalies/run:
+    post:
+      summary: Run detection synchronously
+      responses:
+        "200": { description: "{ detected, message }" }
+  /api/anomalies/{id}/resolve:
+    patch:
+      summary: Dismiss an anomaly permanently (survives re-runs)
+      parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+      responses:
+        "200": { description: Resolved }
+        "404": { description: Not found }
+  /api/recurring:
+    get:
+      summary: Detected recurring charges (3+ stable months)
+      responses:
+        "200": { description: Recurring charge array }
+  /api/currencies:
+    get:
+      summary: Per-currency transaction counts and totals
+      responses:
+        "200": { description: "[{ currency, count, total }]" }
+  /api/stats:
+    get:
+      summary: Dashboard headline stats
+      parameters: [{ $ref: "#/components/parameters/Currency" }]
+      responses:
+        "200": { description: Stats for the selected currency }
+  /api/categories:
+    get:
+      summary: Per-category totals
+      parameters: [{ $ref: "#/components/parameters/Currency" }]
+      responses:
+        "200": { description: Category totals }
+  /api/trends:
+    get:
+      summary: Monthly spending series
+      parameters: [{ $ref: "#/components/parameters/Currency" }]
+      responses:
+        "200": { description: Month/total series }
+  /api/reports/monthly:
+    get:
+      summary: Detailed monthly report
+      parameters:
+        - { name: month, in: query, description: "yyyy-MM, default current", schema: { type: string } }
+        - { $ref: "#/components/parameters/Currency" }
+      responses:
+        "200": { description: Totals, shares, top merchants, MoM change }
+        "400": { description: Bad month format }
+  /api/budgets:
+    get:
+      summary: Budget status for the current month
+      parameters: [{ $ref: "#/components/parameters/Currency" }]
+      responses:
+        "200": { description: "[{ category, limit, spent, percentage }]" }
+    post:
+      summary: Upsert a category budget
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                category: { type: string }
+                limitAmount: { type: number }
+      responses:
+        "200": { description: Saved }
+        "400": { description: Validation error }
+  /api/budgets/{category}:
+    delete:
+      summary: Remove a category budget
+      parameters: [{ name: category, in: path, required: true, schema: { type: string } }]
+      responses:
+        "200": { description: Removed }
+        "404": { description: No such budget }
+  /api/demo-data:
+    post:
+      summary: Seed a five-month sample dataset (empty accounts only)
+      responses:
+        "200": { description: "{ expenses, budgets, anomalies }" }
+        "409": { description: Account already has data }
+components:
+  parameters:
+    Currency:
+      name: currency
+      in: query
+      description: Currency code; defaults to the user's most used one
+      schema: { type: string }
+  schemas:
+    Credentials:
+      type: object
+      properties:
+        username: { type: string, description: "3-50 chars: letters, digits, . _ -" }
+        password: { type: string, minLength: 8, maxLength: 128 }
+    ExpenseInput:
+      type: object
+      required: [amount, currency, category, merchant, date]
+      properties:
+        amount: { type: number, exclusiveMinimum: 0 }
+        currency: { type: string, maxLength: 10 }
+        category: { type: string, maxLength: 100 }
+        merchant: { type: string, maxLength: 200 }
+        description: { type: string }
+        date: { type: string, format: date-time }
+security:
+  - cookieAuth: []
