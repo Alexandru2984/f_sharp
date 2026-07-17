@@ -4,7 +4,23 @@ open System
 open Microsoft.Data.Sqlite
 open Dapper
 
+/// SQLite has no native decimal type: whole amounts come back as Int64 and
+/// fractional ones as Double, either of which breaks Dapper's default strict
+/// cast to decimal. This handler accepts whatever affinity SQLite chose.
+type private SqliteDecimalHandler() =
+    inherit SqlMapper.TypeHandler<decimal>()
+    override _.SetValue(param, value) = param.Value <- value
+    override _.Parse(value: obj) =
+        match value with
+        | :? decimal as d -> d
+        | :? double as d -> decimal d
+        | :? int64 as i -> decimal i
+        | :? string as s -> Convert.ToDecimal(s, System.Globalization.CultureInfo.InvariantCulture)
+        | other -> Convert.ToDecimal(other, System.Globalization.CultureInfo.InvariantCulture)
+
 module Storage =
+    do SqlMapper.AddTypeHandler(SqliteDecimalHandler())
+
     /// Set at startup via configure(); tests point this at a throwaway file.
     let mutable connectionString = "Data Source=data/finance.db;Foreign Keys=True"
 
@@ -111,13 +127,30 @@ module Storage =
         use conn = new SqliteConnection(connectionString)
         conn.Query<Expense>("SELECT * FROM Expenses WHERE UserId = @UserId", {| UserId = userId |}) |> List.ofSeq
 
-    let insertAnomaly userId (anomaly: Anomaly) =
+    let private insertAnomalySql = """
+        INSERT INTO Anomalies (UserId, ExpenseId, RuleCode, Score, Severity, Reason, Recommendation, DetectedAt, IsResolved)
+        VALUES (@UserId, @ExpenseId, @RuleCode, @Score, @Severity, @Reason, @Recommendation, @DetectedAt, @IsResolved);
+    """
+
+    [<CLIMutable>]
+    type private AnomalyKey = { ExpenseId : int; RuleCode : string }
+
+    /// (ExpenseId, RuleCode) pairs the user has already marked as resolved.
+    let getResolvedAnomalyKeys userId =
         use conn = new SqliteConnection(connectionString)
-        let sql = """
-            INSERT INTO Anomalies (UserId, ExpenseId, Score, Severity, Reason, Recommendation, DetectedAt, IsResolved)
-            VALUES (@UserId, @ExpenseId, @Score, @Severity, @Reason, @Recommendation, @DetectedAt, @IsResolved);
-        """
-        conn.Execute(sql, {| anomaly with UserId = userId |}) |> ignore
+        conn.Query<AnomalyKey>("SELECT ExpenseId, RuleCode FROM Anomalies WHERE UserId = @UserId AND IsResolved = 1", {| UserId = userId |})
+        |> Seq.map (fun k -> k.ExpenseId, k.RuleCode)
+        |> List.ofSeq
+
+    /// Atomically swaps the user's unresolved anomalies for a fresh detection run.
+    let replaceUnresolvedAnomalies userId (anomalies: Anomaly list) =
+        use conn = new SqliteConnection(connectionString)
+        conn.Open()
+        use tx = conn.BeginTransaction()
+        conn.Execute("DELETE FROM Anomalies WHERE UserId = @UserId AND IsResolved = 0", {| UserId = userId |}, tx) |> ignore
+        for anomaly in anomalies do
+            conn.Execute(insertAnomalySql, {| anomaly with UserId = userId |}, tx) |> ignore
+        tx.Commit()
 
     let resolveAnomaly userId (id: int) =
         use conn = new SqliteConnection(connectionString)

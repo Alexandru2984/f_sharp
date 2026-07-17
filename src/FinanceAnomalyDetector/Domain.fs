@@ -20,6 +20,7 @@ type Anomaly = {
     Id : int
     UserId : int
     ExpenseId : int
+    RuleCode : string
     Score : int
     Severity : string
     Reason : string
