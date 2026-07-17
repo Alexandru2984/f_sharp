@@ -1,0 +1,12 @@
+{
+  "name": "Finance Anomaly Detector",
+  "short_name": "FinAnomaly",
+  "description": "Expense tracking with rule-based anomaly detection",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#121212",
+  "theme_color": "#bb86fc",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

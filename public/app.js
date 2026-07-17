@@ -25,6 +25,8 @@ const app = {
         trends: [],
         budgets: [],
         recurring: [],
+        currencies: [],
+        currency: '',
         report: null,
         reportMonth: new Date().toISOString().slice(0, 7),
         filters: { search: '', category: '', from: '', to: '' },
@@ -111,11 +113,17 @@ const app = {
 
     async showPage(page) {
         const content = document.getElementById('app-content');
+        this.currentPage = page;
         this.destroyCharts();
         this.closeModal();
         content.innerHTML = '<p>Loading...</p>';
         this.setNavVisible(page !== 'login');
         this.setActiveNav(page);
+        const titles = {
+            dashboard: 'Dashboard', expenses: 'Expenses', import: 'Add Data',
+            budgets: 'Budgets', reports: 'Reports', account: 'Account', login: 'Sign In'
+        };
+        document.title = `${titles[page] || 'App'} · Finance Anomaly Detector`;
 
         try {
             if (page === 'dashboard') {
@@ -150,16 +158,22 @@ const app = {
 
     // ---- data loading ----
 
+    currencyQS(prefix = '?') {
+        return this.state.currency ? `${prefix}currency=${encodeURIComponent(this.state.currency)}` : '';
+    },
+
     async loadDashboardData() {
-        const [stats, anomalies, expensePage, categories, trends, budgets] = await Promise.all([
-            this.fetchAPI('/api/stats'),
+        const cur = this.currencyQS();
+        const [stats, anomalies, expensePage, categories, trends, budgets, currencies] = await Promise.all([
+            this.fetchAPI('/api/stats' + cur),
             this.fetchAPI('/api/anomalies'),
             this.fetchAPI('/api/expenses?page=1&pageSize=10'),
-            this.fetchAPI('/api/categories'),
-            this.fetchAPI('/api/trends'),
-            this.fetchAPI('/api/budgets')
+            this.fetchAPI('/api/categories' + cur),
+            this.fetchAPI('/api/trends' + cur),
+            this.fetchAPI('/api/budgets' + cur),
+            this.fetchAPI('/api/currencies')
         ]);
-        Object.assign(this.state, { stats, anomalies, expensePage, categories, trends, budgets });
+        Object.assign(this.state, { stats, anomalies, expensePage, categories, trends, budgets, currencies });
     },
 
     async loadExpenses() {
@@ -178,12 +192,14 @@ const app = {
     },
 
     async loadReport() {
-        const [report, recurring] = await Promise.all([
-            this.fetchAPI('/api/reports/monthly?month=' + encodeURIComponent(this.state.reportMonth)),
-            this.fetchAPI('/api/recurring')
+        const [report, recurring, currencies] = await Promise.all([
+            this.fetchAPI('/api/reports/monthly?month=' + encodeURIComponent(this.state.reportMonth) + this.currencyQS('&')),
+            this.fetchAPI('/api/recurring'),
+            this.fetchAPI('/api/currencies')
         ]);
         this.state.report = report;
         this.state.recurring = recurring;
+        this.state.currencies = currencies;
     },
 
     // ---- actions ----
@@ -406,19 +422,35 @@ const app = {
             return;
         }
 
+        const currencySelector = this.state.currencies.length > 1 ? `
+            <select data-select="currency" title="Currency">
+                ${this.state.currencies.map(c => `<option value="${escapeHTML(c.currency)}" ${c.currency === stats.currency ? 'selected' : ''}>${escapeHTML(c.currency)} (${c.count})</option>`).join('')}
+            </select>` : '';
+
+        const overBudget = budgets.filter(b => b.percentage >= 100);
+        const nearBudget = budgets.filter(b => b.percentage >= 90 && b.percentage < 100);
+        const budgetBanner = overBudget.length > 0
+            ? `<div class="banner danger">Over budget: ${overBudget.map(b => `${escapeHTML(b.category)} (${b.percentage}%)`).join(', ')}</div>`
+            : nearBudget.length > 0
+                ? `<div class="banner warning">Approaching budget limit: ${nearBudget.map(b => `${escapeHTML(b.category)} (${b.percentage}%)`).join(', ')}</div>`
+                : '';
+
         el.innerHTML = `
             <div class="flex-between">
                 <h2>Dashboard Overview</h2>
-                <div style="display:flex; gap: 1rem;">
+                <div style="display:flex; gap: 1rem; align-items:center;">
+                    ${currencySelector}
                     <button class="btn btn-outline" data-page="budgets">Budgets</button>
                     <button class="btn" data-action="run-engine">Run Engine</button>
                 </div>
             </div>
 
+            ${budgetBanner}
+
             <div class="grid-3">
-                <div class="card"><h3>Total Expenses</h3><div class="value">${fmtMoney(stats.totalExpenses)}</div></div>
-                <div class="card"><h3>Current Month</h3><div class="value">${fmtMoney(stats.currentMonthSpending)}</div></div>
-                <div class="card"><h3>Avg Monthly</h3><div class="value">${fmtMoney(stats.averageMonthlySpending)}</div></div>
+                <div class="card"><h3>Total Expenses</h3><div class="value">${fmtMoney(stats.totalExpenses)} <span class="unit">${escapeHTML(stats.currency)}</span></div></div>
+                <div class="card"><h3>Current Month</h3><div class="value">${fmtMoney(stats.currentMonthSpending)} <span class="unit">${escapeHTML(stats.currency)}</span></div></div>
+                <div class="card"><h3>Avg Monthly</h3><div class="value">${fmtMoney(stats.averageMonthlySpending)} <span class="unit">${escapeHTML(stats.currency)}</span></div></div>
                 <div class="card"><h3>Anomalies</h3><div class="value">${stats.anomalyCount}</div></div>
                 <div class="card"><h3>Highest Risk Category</h3><div class="value">${escapeHTML(stats.highestRiskCategory)}</div></div>
             </div>
@@ -655,17 +687,23 @@ const app = {
         const changeColor = report.changePercent > 0 ? 'var(--error-color)' : 'var(--success-color)';
         const changeSign = report.changePercent > 0 ? '+' : '';
 
+        const currencySelector = this.state.currencies.length > 1 ? `
+            <select data-select="currency" title="Currency">
+                ${this.state.currencies.map(c => `<option value="${escapeHTML(c.currency)}" ${c.currency === report.currency ? 'selected' : ''}>${escapeHTML(c.currency)}</option>`).join('')}
+            </select>` : '';
+
         el.innerHTML = `
             <div class="flex-between">
                 <h2>Monthly Report</h2>
                 <form data-form="report-month" style="display:flex; gap:0.5rem; align-items:center;">
+                    ${currencySelector}
                     <input type="month" name="month" value="${escapeHTML(reportMonth)}">
                     <button type="submit" class="btn btn-small">Load</button>
                 </form>
             </div>
 
             <div class="grid-3">
-                <div class="card"><h3>Total (${escapeHTML(report.month)})</h3><div class="value">${fmtMoney(report.total)}</div></div>
+                <div class="card"><h3>Total (${escapeHTML(report.month)})</h3><div class="value">${fmtMoney(report.total)} <span class="unit">${escapeHTML(report.currency)}</span></div></div>
                 <div class="card"><h3>Transactions</h3><div class="value">${report.expenseCount}</div></div>
                 <div class="card"><h3>vs Previous Month</h3><div class="value" style="color:${changeColor}">${report.previousMonthTotal > 0 ? changeSign + report.changePercent + '%' : 'n/a'}</div></div>
                 <div class="card"><h3>Anomalies</h3><div class="value">${report.anomalyCount}</div></div>
@@ -822,6 +860,13 @@ document.addEventListener('click', e => {
             app.showPage('expenses');
             break;
     }
+});
+
+document.addEventListener('change', e => {
+    const select = e.target.closest('[data-select="currency"]');
+    if (!select) return;
+    app.state.currency = select.value;
+    app.showPage(app.currentPage || 'dashboard');
 });
 
 document.addEventListener('submit', e => {

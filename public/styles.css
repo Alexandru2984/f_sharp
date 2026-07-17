@@ -216,3 +216,30 @@ a.btn { display: inline-block; text-decoration: none; }
 .toast.visible { opacity: 1; transform: translateY(0); }
 .toast.error { border-color: var(--error-color); }
 
+.card .value .unit { font-size: 0.9rem; color: var(--text-secondary); font-weight: normal; }
+
+select[data-select="currency"] {
+    padding: 0.5rem 0.75rem;
+    background-color: var(--surface-color);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    border-radius: 4px;
+}
+
+.banner {
+    padding: 0.75rem 1.25rem;
+    border-radius: 6px;
+    margin-bottom: 1.5rem;
+    border: 1px solid;
+}
+.banner.warning {
+    background-color: rgba(242, 201, 76, 0.12);
+    border-color: var(--warning-color);
+    color: var(--warning-color);
+}
+.banner.danger {
+    background-color: rgba(207, 102, 121, 0.15);
+    border-color: var(--error-color);
+    color: var(--error-color);
+}
+
