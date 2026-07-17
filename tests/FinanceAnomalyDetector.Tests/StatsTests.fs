@@ -15,7 +15,7 @@ let private sample =
 
 [<Fact>]
 let ``dashboard stats aggregate totals and current month`` () =
-    let stats = Stats.computeDashboardStats now sample []
+    let stats = Stats.computeDashboardStats now "USD" sample []
     Assert.Equal(380m, stats.TotalExpenses)
     Assert.Equal(280m, stats.CurrentMonthSpending)
     Assert.Equal(190m, stats.AverageMonthlySpending) // 380 across 2 distinct months
@@ -26,9 +26,33 @@ let ``highest risk category follows anomaly counts`` () =
     let anomalies =
         [ AnomalyRules.mkAnomaly 2 "NIGHT" 50 "r" "rec"
           AnomalyRules.mkAnomaly 4 "NIGHT" 50 "r" "rec" ]
-    let stats = Stats.computeDashboardStats now sample anomalies
+    let stats = Stats.computeDashboardStats now "USD" sample anomalies
     Assert.Equal("Food", stats.HighestRiskCategory)
     Assert.Equal(2, stats.AnomalyCount)
+
+[<Fact>]
+let ``money aggregates never mix currencies`` () =
+    let eur = { mkExpense 9 500m "Travel" "Airline" (DateTime(2026, 6, 5)) with Currency = "EUR" }
+    let stats = Stats.computeDashboardStats now "USD" (eur :: sample) []
+    Assert.Equal(380m, stats.TotalExpenses)
+    let eurStats = Stats.computeDashboardStats now "EUR" (eur :: sample) []
+    Assert.Equal(500m, eurStats.TotalExpenses)
+    Assert.Equal("EUR", eurStats.Currency)
+
+[<Fact>]
+let ``dominant currency is the most frequent one`` () =
+    let eur = { mkExpense 9 500m "Travel" "Airline" (DateTime(2026, 6, 5)) with Currency = "EUR" }
+    Assert.Equal("USD", Stats.dominantCurrency (eur :: sample))
+    Assert.Equal("USD", Stats.dominantCurrency [])
+
+[<Fact>]
+let ``currency summary groups count and total per currency`` () =
+    let eur = { mkExpense 9 500m "Travel" "Airline" (DateTime(2026, 6, 5)) with Currency = "EUR" }
+    let currencies = Stats.computeCurrencies (eur :: sample)
+    Assert.Equal(2, currencies.Length)
+    Assert.Equal("USD", currencies.Head.Currency)
+    Assert.Equal(4, currencies.Head.Count)
+    Assert.Equal(500m, (currencies |> List.find (fun c -> c.Currency = "EUR")).Total)
 
 [<Fact>]
 let ``monthly trends group and sort by month`` () =
@@ -60,8 +84,15 @@ let ``zero-limit budgets do not divide by zero`` () =
     Assert.Equal(0m, (Assert.Single status).Percentage)
 
 [<Fact>]
+let ``monthly report ignores other currencies`` () =
+    let eur = { mkExpense 9 500m "Travel" "Airline" (DateTime(2026, 6, 5)) with Currency = "EUR" }
+    let report = Stats.computeMonthlyReport "2026-06" "USD" (eur :: sample) []
+    Assert.Equal(280m, report.Total)
+    Assert.Equal("USD", report.Currency)
+
+[<Fact>]
 let ``monthly report computes totals, shares and month-over-month change`` () =
-    let report = Stats.computeMonthlyReport "2026-06" sample []
+    let report = Stats.computeMonthlyReport "2026-06" "USD" sample []
     Assert.Equal(280m, report.Total)
     Assert.Equal(3, report.ExpenseCount)
     Assert.Equal(100m, report.PreviousMonthTotal)
@@ -75,12 +106,12 @@ let ``monthly report counts only anomalies on that month's expenses`` () =
     let anomalies =
         [ AnomalyRules.mkAnomaly 1 "NIGHT" 50 "r" "rec"   // May expense
           AnomalyRules.mkAnomaly 3 "NIGHT" 50 "r" "rec" ] // June expense
-    let report = Stats.computeMonthlyReport "2026-06" sample anomalies
+    let report = Stats.computeMonthlyReport "2026-06" "USD" sample anomalies
     Assert.Equal(1, report.AnomalyCount)
 
 [<Fact>]
 let ``report for an empty month is all zeros`` () =
-    let report = Stats.computeMonthlyReport "2027-01" sample []
+    let report = Stats.computeMonthlyReport "2027-01" "USD" sample []
     Assert.Equal(0m, report.Total)
     Assert.Equal(0, report.ExpenseCount)
     Assert.Empty(report.ByCategory)

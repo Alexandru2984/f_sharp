@@ -100,6 +100,9 @@ module Program =
         | true, d -> Some d
         | _ -> None
 
+    let private currencyParam (ctx: HttpContext) =
+        ctx.TryGetQueryStringValue "currency" |> Option.filter (String.IsNullOrWhiteSpace >> not)
+
     let getExpensesHandler : HttpHandler =
         fun next ctx ->
             let queryInt name fallback =
@@ -180,7 +183,7 @@ module Program =
                 | Some m when not (String.IsNullOrWhiteSpace m) -> m
                 | _ -> DateTime.UtcNow.ToString("yyyy-MM")
             if System.Text.RegularExpressions.Regex.IsMatch(month, @"^\d{4}-(0[1-9]|1[0-2])$") then
-                json (Stats.getMonthlyReport (getUserId ctx) month) next ctx
+                json (Stats.getMonthlyReport (getUserId ctx) month (currencyParam ctx)) next ctx
             else
                 badRequest "month must have the format yyyy-MM" next ctx
 
@@ -266,16 +269,19 @@ module Program =
                 (setStatusCode 404 >=> json {| error = "Anomaly not found" |}) next ctx
             
     let getStatsHandler : HttpHandler =
-        fun next ctx -> json (Stats.getDashboardStats (getUserId ctx)) next ctx
-        
+        fun next ctx -> json (Stats.getDashboardStats (getUserId ctx) (currencyParam ctx)) next ctx
+
     let getCategoriesHandler : HttpHandler =
-        fun next ctx -> json (Stats.getCategoryBreakdown (getUserId ctx)) next ctx
+        fun next ctx -> json (Stats.getCategoryBreakdown (getUserId ctx) (currencyParam ctx)) next ctx
 
     let getTrendsHandler : HttpHandler =
-        fun next ctx -> json (Stats.getMonthlyTrends (getUserId ctx)) next ctx
+        fun next ctx -> json (Stats.getMonthlyTrends (getUserId ctx) (currencyParam ctx)) next ctx
 
     let getBudgetsHandler : HttpHandler =
-        fun next ctx -> json (Stats.getBudgetStatus (getUserId ctx)) next ctx
+        fun next ctx -> json (Stats.getBudgetStatus (getUserId ctx) (currencyParam ctx)) next ctx
+
+    let getCurrenciesHandler : HttpHandler =
+        fun next ctx -> json (Stats.getCurrencies (getUserId ctx)) next ctx
 
     let postBudgetHandler : HttpHandler =
         fun next ctx ->
@@ -301,6 +307,7 @@ module Program =
                 route "/api/recurring" >=> getRecurringHandler
                 route "/api/stats" >=> getStatsHandler
                 route "/api/categories" >=> getCategoriesHandler
+                route "/api/currencies" >=> getCurrenciesHandler
                 route "/api/trends" >=> getTrendsHandler
                 route "/api/budgets" >=> getBudgetsHandler
                 route "/api/reports/monthly" >=> getMonthlyReportHandler

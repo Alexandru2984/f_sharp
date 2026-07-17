@@ -6,6 +6,7 @@ open System
 /// Storage-backed wrappers at the bottom used by the HTTP layer.
 module Stats =
     type DashboardStats = {
+        Currency : string
         TotalExpenses : decimal
         CurrentMonthSpending : decimal
         AverageMonthlySpending : decimal
@@ -13,15 +14,36 @@ module Stats =
         HighestRiskCategory : string
     }
 
-    let computeDashboardStats (now: DateTime) (expenses: Expense list) (anomalies: Anomaly list) =
-        let total = expenses |> List.sumBy (fun e -> e.Amount)
+    type CurrencySummary = {
+        Currency : string
+        Count : int
+        Total : decimal
+    }
+
+    /// The currency with the most transactions; "USD" for empty accounts.
+    let dominantCurrency (expenses: Expense list) =
+        match expenses with
+        | [] -> "USD"
+        | _ -> expenses |> List.countBy (fun e -> e.Currency) |> List.maxBy snd |> fst
+
+    let computeCurrencies (expenses: Expense list) =
+        expenses
+        |> List.groupBy (fun e -> e.Currency)
+        |> List.map (fun (c, lst) -> { Currency = c; Count = lst.Length; Total = lst |> List.sumBy (fun e -> e.Amount) })
+        |> List.sortByDescending (fun c -> c.Count)
+
+    /// Money aggregates are computed for a single currency; the anomaly
+    /// signal (count, riskiest category) stays global since risk is not a sum.
+    let computeDashboardStats (now: DateTime) (currency: string) (expenses: Expense list) (anomalies: Anomaly list) =
+        let money = expenses |> List.filter (fun e -> e.Currency = currency)
+        let total = money |> List.sumBy (fun e -> e.Amount)
 
         let currentMonthSpending =
-            expenses
+            money
             |> List.filter (fun e -> e.Date.Month = now.Month && e.Date.Year = now.Year)
             |> List.sumBy (fun e -> e.Amount)
 
-        let months = expenses |> List.map (fun e -> e.Date.ToString("yyyy-MM")) |> List.distinct |> List.length
+        let months = money |> List.map (fun e -> e.Date.ToString("yyyy-MM")) |> List.distinct |> List.length
         let avgMonthly = if months = 0 then 0m else total / decimal months
 
         let highestRiskCat =
@@ -34,7 +56,8 @@ module Stats =
                 |> List.head
                 |> fst
 
-        { TotalExpenses = total
+        { Currency = currency
+          TotalExpenses = total
           CurrentMonthSpending = currentMonthSpending
           AverageMonthlySpending = avgMonthly
           AnomalyCount = anomalies.Length
@@ -77,6 +100,7 @@ module Stats =
 
     type MonthlyReport = {
         Month : string
+        Currency : string
         Total : decimal
         ExpenseCount : int
         PreviousMonthTotal : decimal
@@ -86,8 +110,9 @@ module Stats =
         AnomalyCount : int
     }
 
-    /// Detailed report for one calendar month ("yyyy-MM").
-    let computeMonthlyReport (month: string) (expenses: Expense list) (anomalies: Anomaly list) =
+    /// Detailed report for one calendar month ("yyyy-MM") in one currency.
+    let computeMonthlyReport (month: string) (currency: string) (allExpenses: Expense list) (anomalies: Anomaly list) =
+        let expenses = allExpenses |> List.filter (fun e -> e.Currency = currency)
         let inMonth (e: Expense) = e.Date.ToString("yyyy-MM") = month
         let monthExpenses = expenses |> List.filter inMonth
         let total = monthExpenses |> List.sumBy (fun e -> e.Amount)
@@ -126,6 +151,7 @@ module Stats =
         let anomalyCount = anomalies |> List.filter (fun a -> Set.contains a.ExpenseId monthExpenseIds) |> List.length
 
         { Month = month
+          Currency = currency
           Total = total
           ExpenseCount = monthExpenses.Length
           PreviousMonthTotal = previousTotal
@@ -135,18 +161,34 @@ module Stats =
           AnomalyCount = anomalyCount }
 
     // ---- Storage-backed wrappers ----
+    // `currencyOpt` comes from the ?currency= query param; the user's most
+    // used currency is the default.
 
-    let getDashboardStats userId =
-        computeDashboardStats DateTime.UtcNow (Storage.getAllExpenses userId) (Storage.getAnomalies userId)
+    let private resolveCurrency (currencyOpt: string option) (expenses: Expense list) =
+        currencyOpt |> Option.defaultValue (dominantCurrency expenses)
 
-    let getCategoryBreakdown userId =
-        computeCategoryBreakdown (Storage.getAllExpenses userId)
+    let private inCurrency currency (expenses: Expense list) =
+        expenses |> List.filter (fun e -> e.Currency = currency)
 
-    let getMonthlyTrends userId =
-        computeMonthlyTrends (Storage.getAllExpenses userId)
+    let getCurrencies userId =
+        computeCurrencies (Storage.getAllExpenses userId)
 
-    let getBudgetStatus userId =
-        computeBudgetStatus DateTime.UtcNow (Storage.getBudgets userId) (Storage.getAllExpenses userId)
+    let getDashboardStats userId currencyOpt =
+        let expenses = Storage.getAllExpenses userId
+        computeDashboardStats DateTime.UtcNow (resolveCurrency currencyOpt expenses) expenses (Storage.getAnomalies userId)
 
-    let getMonthlyReport userId (month: string) =
-        computeMonthlyReport month (Storage.getAllExpenses userId) (Storage.getAnomalies userId)
+    let getCategoryBreakdown userId currencyOpt =
+        let expenses = Storage.getAllExpenses userId
+        computeCategoryBreakdown (inCurrency (resolveCurrency currencyOpt expenses) expenses)
+
+    let getMonthlyTrends userId currencyOpt =
+        let expenses = Storage.getAllExpenses userId
+        computeMonthlyTrends (inCurrency (resolveCurrency currencyOpt expenses) expenses)
+
+    let getBudgetStatus userId currencyOpt =
+        let expenses = Storage.getAllExpenses userId
+        computeBudgetStatus DateTime.UtcNow (Storage.getBudgets userId) (inCurrency (resolveCurrency currencyOpt expenses) expenses)
+
+    let getMonthlyReport userId (month: string) currencyOpt =
+        let expenses = Storage.getAllExpenses userId
+        computeMonthlyReport month (resolveCurrency currencyOpt expenses) expenses (Storage.getAnomalies userId)
