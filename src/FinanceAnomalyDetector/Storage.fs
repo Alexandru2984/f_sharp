@@ -5,13 +5,25 @@ open Microsoft.Data.Sqlite
 open Dapper
 
 module Storage =
-    let connectionString = "Data Source=/home/micu/f_sharp/data/finance.db"
+    /// Set at startup via configure(); tests point this at a throwaway file.
+    let mutable connectionString = "Data Source=data/finance.db;Foreign Keys=True"
+
+    let configure (dbPath: string) =
+        let dir = System.IO.Path.GetDirectoryName(dbPath: string)
+        if not (String.IsNullOrEmpty dir) then
+            System.IO.Directory.CreateDirectory(dir) |> ignore
+        connectionString <- sprintf "Data Source=%s;Foreign Keys=True" dbPath
+
+    let private columnExists (conn: SqliteConnection) (table: string) (column: string) =
+        conn.Query<string>(sprintf "SELECT name FROM pragma_table_info('%s')" table)
+        |> Seq.exists (fun c -> String.Equals(c, column, StringComparison.OrdinalIgnoreCase))
 
     let initDb () =
         use conn = new SqliteConnection(connectionString)
         conn.Open()
         let cmd = conn.CreateCommand()
         cmd.CommandText <- """
+            PRAGMA journal_mode=WAL;
             CREATE TABLE IF NOT EXISTS Users (
                 Id INTEGER PRIMARY KEY AUTOINCREMENT,
                 Username TEXT UNIQUE NOT NULL,
@@ -50,17 +62,26 @@ module Storage =
                 PRIMARY KEY(UserId, Category),
                 FOREIGN KEY(UserId) REFERENCES Users(Id)
             );
+            CREATE INDEX IF NOT EXISTS IX_Expenses_UserId_Date ON Expenses(UserId, Date);
+            CREATE INDEX IF NOT EXISTS IX_Expenses_UserId_Category ON Expenses(UserId, Category);
+            CREATE INDEX IF NOT EXISTS IX_Anomalies_UserId_Resolved ON Anomalies(UserId, IsResolved);
         """
         cmd.ExecuteNonQuery() |> ignore
 
+        // Lightweight migration for databases created before RuleCode existed.
+        if not (columnExists conn "Anomalies" "RuleCode") then
+            conn.Execute("ALTER TABLE Anomalies ADD COLUMN RuleCode TEXT NOT NULL DEFAULT 'LEGACY'") |> ignore
+
+    let private insertExpenseSql = """
+        INSERT INTO Expenses (UserId, Amount, Currency, Category, Merchant, Description, Date, CreatedAt)
+        VALUES (@UserId, @Amount, @Currency, @Category, @Merchant, @Description, @Date, @CreatedAt);
+        SELECT last_insert_rowid();
+    """
+
     let insertExpense userId (expense: ExpenseDto) =
         use conn = new SqliteConnection(connectionString)
-        let sql = """
-            INSERT INTO Expenses (UserId, Amount, Currency, Category, Merchant, Description, Date, CreatedAt)
-            VALUES (@UserId, @Amount, @Currency, @Category, @Merchant, @Description, @Date, @CreatedAt);
-            SELECT last_insert_rowid();
-        """
-        let id = conn.QuerySingle<int>(sql, {| UserId = userId; Amount = expense.Amount; Currency = expense.Currency; Category = expense.Category; Merchant = expense.Merchant; Description = expense.Description; Date = expense.Date; CreatedAt = DateTime.UtcNow |})
+        let now = DateTime.UtcNow
+        let id = conn.QuerySingle<int>(insertExpenseSql, {| UserId = userId; Amount = expense.Amount; Currency = expense.Currency; Category = expense.Category; Merchant = expense.Merchant; Description = expense.Description; Date = expense.Date; CreatedAt = now |})
         { Id = id
           UserId = userId
           Amount = expense.Amount
@@ -69,7 +90,18 @@ module Storage =
           Merchant = expense.Merchant
           Description = expense.Description
           Date = expense.Date
-          CreatedAt = DateTime.UtcNow }
+          CreatedAt = now }
+
+    /// Inserts a batch of expenses inside a single transaction; returns the row count.
+    let insertExpenses userId (expenses: ExpenseDto list) =
+        use conn = new SqliteConnection(connectionString)
+        conn.Open()
+        use tx = conn.BeginTransaction()
+        let now = DateTime.UtcNow
+        for e in expenses do
+            conn.Execute(insertExpenseSql, {| UserId = userId; Amount = e.Amount; Currency = e.Currency; Category = e.Category; Merchant = e.Merchant; Description = e.Description; Date = e.Date; CreatedAt = now |}, tx) |> ignore
+        tx.Commit()
+        expenses.Length
 
     let getExpenses userId =
         use conn = new SqliteConnection(connectionString)

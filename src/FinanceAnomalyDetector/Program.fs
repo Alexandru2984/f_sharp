@@ -112,21 +112,31 @@ module Program =
                         return! (setStatusCode 400 >=> json {| errors = errors |}) next ctx
             }
             
+    [<Literal>]
+    let MaxCsvUploadBytes = 5L * 1024L * 1024L
+
     let importCsvHandler : HttpHandler =
         fun next ctx ->
             task {
                 if not ctx.Request.HasFormContentType then
-                    return! (setStatusCode 400 >=> json {| error = "Form content required" |}) next ctx
+                    return! badRequest "Form content required" next ctx
                 else
                     let! form = ctx.Request.ReadFormAsync()
                     let file = form.Files.GetFile("file")
                     if isNull file then
-                        return! (setStatusCode 400 >=> json {| error = "No file uploaded" |}) next ctx
+                        return! badRequest "No file uploaded" next ctx
+                    elif file.Length > MaxCsvUploadBytes then
+                        return! badRequest "File exceeds the 5 MB upload limit" next ctx
                     else
                         use stream = file.OpenReadStream()
                         use reader = new StreamReader(stream)
-                        let result = CsvImport.importCsv (getUserId ctx) reader
-                        return! json result next ctx
+                        try
+                            let parsed = CsvImport.parseCsv reader
+                            let imported = Storage.insertExpenses (getUserId ctx) parsed.Valid
+                            let result = { ImportedRows = imported; SkippedRows = parsed.Skipped; ValidationErrors = parsed.Errors }
+                            return! json result next ctx
+                        with :? CsvHelper.CsvHelperException ->
+                            return! badRequest "Could not parse the CSV file; check the header row and delimiters" next ctx
             }
 
     let getAnomaliesHandler : HttpHandler =
@@ -200,17 +210,38 @@ module Program =
             apiRoutes
         ]
 
+    /// Reads an environment variable with a fallback default.
+    let envOr (name: string) (fallback: string) =
+        let value = Environment.GetEnvironmentVariable(name)
+        if String.IsNullOrWhiteSpace(value) then fallback else value
+
     [<EntryPoint>]
     let main args =
         let builder = WebApplication.CreateBuilder(args)
-        
-        DotNetEnv.Env.Load("/home/micu/f_sharp/.env") |> ignore
-        let port = Environment.GetEnvironmentVariable("APP_PORT")
-        let portStr = if String.IsNullOrEmpty(port) then "5000" else port
-        
-        builder.WebHost.ConfigureKestrel(fun serverOptions -> 
-            serverOptions.ListenLocalhost(int portStr)
-        ) |> ignore
+
+        // Loads the nearest .env walking up from the working directory (repo
+        // root in dev, publish dir in prod via systemd EnvironmentFile anyway).
+        // NoClobber: real environment variables always win over .env entries.
+        DotNetEnv.Env.TraversePath().NoClobber().Load() |> ignore
+
+        let port =
+            match Int32.TryParse(envOr "APP_PORT" "5000") with
+            | true, p -> p
+            | _ -> 5000
+
+        let publicDir =
+            let configured = envOr "PUBLIC_DIR" (Path.Combine(Directory.GetCurrentDirectory(), "public"))
+            if Directory.Exists(configured) then Path.GetFullPath(configured)
+            else Path.Combine(AppContext.BaseDirectory, "public")
+
+        Storage.configure (envOr "DB_PATH" (Path.Combine("data", "finance.db")))
+
+        // ASPNETCORE_URLS (e.g. in containers) takes precedence; otherwise
+        // bind to localhost only, since nginx fronts the app.
+        if String.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ASPNETCORE_URLS")) then
+            builder.WebHost.ConfigureKestrel(fun serverOptions ->
+                serverOptions.ListenLocalhost(port)
+            ) |> ignore
 
         builder.Services.AddGiraffe() |> ignore
 
@@ -278,7 +309,7 @@ module Program =
         ) |> ignore
 
         let staticFileOptions = Microsoft.AspNetCore.Builder.StaticFileOptions()
-        staticFileOptions.FileProvider <- new Microsoft.Extensions.FileProviders.PhysicalFileProvider("/home/micu/f_sharp/public")
+        staticFileOptions.FileProvider <- new Microsoft.Extensions.FileProviders.PhysicalFileProvider(publicDir)
         app.UseStaticFiles(staticFileOptions) |> ignore
 
         app.UseGiraffeErrorHandler(errorHandler) |> ignore
