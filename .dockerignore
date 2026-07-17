@@ -1,0 +1,11 @@
+**/bin/
+**/obj/
+publish/
+data/
+.git/
+.github/
+.env
+*.md
+finance_nginx.conf
+scripts/
+tests/

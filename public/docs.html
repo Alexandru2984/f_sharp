@@ -17,18 +17,33 @@
     </nav>
     <main class="container" style="padding: 2rem 0;">
         <h1>API Documentation</h1>
-        <p>This page describes the API endpoints and detection rules for the Finance Anomaly Detector.</p>
+        <p>All <code>/api</code> endpoints except login/register require an authenticated cookie session. Unauthenticated requests receive <code>401</code>.</p>
 
-        <h2 style="margin-top: 2rem;">Endpoints</h2>
-        
-        <h3>GET /health</h3>
-        <p>Check application status.</p>
-        
+        <h2 style="margin-top: 2rem;">Auth</h2>
+
+        <h3>POST /api/register</h3>
+        <p>Create an account and sign in. Username: 3-50 chars (letters, digits, <code>.</code> <code>_</code> <code>-</code>); password: 8-128 chars. Rate limited per IP.</p>
+        <div class="docs-code">
+{ "Username": "alex", "Password": "correct-horse-battery" }
+        </div>
+
+        <h3>POST /api/login &nbsp;/&nbsp; POST /api/logout</h3>
+        <p>Same body as register. Login is rate limited (10/min per IP; returns <code>429</code> beyond that).</p>
+
+        <h3>GET /api/me</h3>
+        <p>Returns the current username.</p>
+
+        <h3>POST /api/account/change-password</h3>
+        <div class="docs-code">
+{ "OldPassword": "...", "NewPassword": "..." }
+        </div>
+
+        <h2 style="margin-top: 2rem;">Expenses</h2>
+
         <h3>GET /api/expenses</h3>
-        <p>Returns recent expenses.</p>
-        
+        <p>Paginated listing. Query params: <code>page</code> (default 1), <code>pageSize</code> (default 50, max 200), <code>category</code>, <code>search</code> (merchant/description substring), <code>from</code>, <code>to</code> (dates; a bare <code>to</code> date is inclusive). Returns <code>{ items, total, page, pageSize }</code>.</p>
+
         <h3>POST /api/expenses</h3>
-        <p>Create a single expense. JSON body:</p>
         <div class="docs-code">
 {
     "Amount": 100.50,
@@ -40,26 +55,64 @@
 }
         </div>
 
-        <h3>POST /api/expenses/import-csv</h3>
-        <p>Upload a CSV file with form-data 'file'. Expected columns: Date, Amount, Currency, Category, Merchant, Description.</p>
+        <h3>PUT /api/expenses/{id}</h3>
+        <p>Full update with the same body as POST. <code>404</code> if the expense doesn't exist or belongs to another user.</p>
 
-        <h3>GET /api/anomalies</h3>
-        <p>Get a list of detected anomalies.</p>
+        <h3>DELETE /api/expenses/{id}</h3>
+        <p>Deletes the expense and any anomalies linked to it.</p>
+
+        <h3>POST /api/expenses/import-csv</h3>
+        <p>Multipart form upload (<code>file</code>). Headers (case-insensitive): Date, Amount, Currency, Category, Merchant, Description. Limits: 5 MB, 10,000 rows. Invalid rows are skipped and reported with row numbers.</p>
+
+        <h3>GET /api/expenses/export</h3>
+        <p>Downloads all your expenses as RFC 4180 CSV.</p>
+
+        <h2 style="margin-top: 2rem;">Anomalies</h2>
 
         <h3>POST /api/anomalies/run</h3>
-        <p>Trigger the anomaly detection engine across all expenses.</p>
+        <p>Re-evaluates every rule over your full history. Anomalies you dismissed stay dismissed (matched by expense + rule).</p>
 
-        <h2 style="margin-top: 2rem;">Anomaly Rules</h2>
+        <h3>GET /api/anomalies</h3>
+        <p>Open (unresolved) anomalies, newest first.</p>
+
+        <h3>PATCH /api/anomalies/{id}/resolve</h3>
+        <p>Dismisses an anomaly permanently.</p>
+
+        <h2 style="margin-top: 2rem;">Insights</h2>
+
+        <h3>GET /api/stats &nbsp;/&nbsp; /api/categories &nbsp;/&nbsp; /api/trends</h3>
+        <p>Dashboard aggregates: headline stats, per-category totals, monthly trend series.</p>
+
+        <h3>GET /api/reports/monthly?month=yyyy-MM</h3>
+        <p>Monthly report: total, transaction count, previous-month comparison, per-category share, top 5 merchants, anomaly count. Defaults to the current month.</p>
+
+        <h3>GET /api/recurring</h3>
+        <p>Detected recurring charges: merchant, dominant category, average amount, occurrences, months active.</p>
+
+        <h2 style="margin-top: 2rem;">Budgets</h2>
+
+        <h3>GET /api/budgets &nbsp;/&nbsp; POST /api/budgets &nbsp;/&nbsp; DELETE /api/budgets/{category}</h3>
+        <div class="docs-code">
+{ "Category": "Groceries", "LimitAmount": 500 }
+        </div>
+
+        <h2 style="margin-top: 2rem;">Detection Rules</h2>
         <ul>
-            <li><strong>High Expense:</strong> Over 3x the category average.</li>
-            <li><strong>Merchant Spike:</strong> Over 4x the merchant average.</li>
-            <li><strong>Category Change:</strong> Merchant used in an unusual category compared to past transactions.</li>
-            <li><strong>Night Spending:</strong> Transactions made between 1 AM and 4 AM.</li>
+            <li><strong>CAT_OUTLIER:</strong> z-score ≥ 3 against the category history (needs 5+ samples; 3x-average fallback for 3-4).</li>
+            <li><strong>MERCHANT_SPIKE:</strong> over 4x the merchant's average.</li>
+            <li><strong>CAT_CHANGE:</strong> merchant used in an unusual category.</li>
+            <li><strong>DUPLICATE:</strong> same merchant and amount within 10 minutes; only the later charge is flagged.</li>
+            <li><strong>SUB_HIKE:</strong> a stable recurring charge priced 20%+ above its usual amount.</li>
+            <li><strong>NIGHT:</strong> transactions between 1 AM and 4 AM.</li>
         </ul>
 
-        <h2 style="margin-top: 2rem;">Example CURL</h2>
+        <h2 style="margin-top: 2rem;">Example</h2>
         <div class="docs-code">
-curl -X POST http://localhost:5000/api/anomalies/run
+curl -c jar -X POST localhost:5000/api/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"alex","password":"..."}'
+
+curl -b jar -X POST localhost:5000/api/anomalies/run
         </div>
     </main>
 </body>
