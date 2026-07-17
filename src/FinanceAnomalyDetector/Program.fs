@@ -470,6 +470,12 @@ module Program =
 
         let staticFileOptions = Microsoft.AspNetCore.Builder.StaticFileOptions()
         staticFileOptions.FileProvider <- new Microsoft.Extensions.FileProviders.PhysicalFileProvider(publicDir)
+        // .yaml has no default content-type mapping and would otherwise fall
+        // through to the (authenticated) API routes.
+        let contentTypes = Microsoft.AspNetCore.StaticFiles.FileExtensionContentTypeProvider()
+        contentTypes.Mappings[".yaml"] <- "application/yaml"
+        contentTypes.Mappings[".yml"] <- "application/yaml"
+        staticFileOptions.ContentTypeProvider <- contentTypes
         app.UseStaticFiles(staticFileOptions) |> ignore
 
         app.UseGiraffeErrorHandler(errorHandler) |> ignore
