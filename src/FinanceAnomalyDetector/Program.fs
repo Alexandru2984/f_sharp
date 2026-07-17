@@ -25,42 +25,64 @@ module Program =
         let claim = ctx.User.FindFirst(ClaimTypes.NameIdentifier)
         if isNull claim then 0 else int claim.Value
 
+    /// Binds the request body as JSON, mapping malformed payloads to a 400
+    /// instead of letting the exception surface as a 500.
+    let tryBindJson<'T> (ctx: HttpContext) =
+        task {
+            try
+                let! dto = ctx.BindJsonAsync<'T>()
+                return Ok dto
+            with _ ->
+                return Error "Invalid JSON body"
+        }
+
+    let badRequest (message: string) : HttpHandler =
+        setStatusCode 400 >=> json {| error = message |}
+
+    let signInUser (ctx: HttpContext) (user: User) =
+        let claims = [|
+            Claim(ClaimTypes.Name, user.Username)
+            Claim(ClaimTypes.NameIdentifier, user.Id.ToString())
+        |]
+        let identity = ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme)
+        ctx.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, ClaimsPrincipal(identity))
+
     let loginHandler : HttpHandler =
         fun next ctx ->
             task {
-                let! dto = ctx.BindJsonAsync<LoginRequest>()
-                match Storage.getUserByUsername dto.Username with
-                | Some user when BCrypt.Net.BCrypt.Verify(dto.Password, user.PasswordHash) ->
-                    let claims = [| 
-                        Claim(ClaimTypes.Name, user.Username)
-                        Claim(ClaimTypes.NameIdentifier, user.Id.ToString()) 
-                    |]
-                    let identity = ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme)
-                    let principal = ClaimsPrincipal(identity)
-                    do! ctx.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal)
-                    return! json {| status = "success" |} next ctx
-                | _ ->
-                    return! (setStatusCode 401 >=> json {| error = "Invalid credentials" |}) next ctx
+                match! tryBindJson<LoginRequest> ctx with
+                | Error msg -> return! badRequest msg next ctx
+                | Ok dto ->
+                    match Storage.getUserByUsername dto.Username with
+                    | Some user when BCrypt.Net.BCrypt.Verify(dto.Password, user.PasswordHash) ->
+                        do! signInUser ctx user
+                        return! json {| status = "success" |} next ctx
+                    | _ ->
+                        return! (setStatusCode 401 >=> json {| error = "Invalid credentials" |}) next ctx
             }
 
     let registerHandler : HttpHandler =
         fun next ctx ->
             task {
-                let! dto = ctx.BindJsonAsync<LoginRequest>()
-                match Storage.getUserByUsername dto.Username with
-                | Some _ ->
-                    return! (setStatusCode 400 >=> json {| error = "Username already exists" |}) next ctx
-                | None ->
-                    let hash = BCrypt.Net.BCrypt.HashPassword(dto.Password)
-                    let user = Storage.createUser dto.Username hash
-                    let claims = [| 
-                        Claim(ClaimTypes.Name, user.Username)
-                        Claim(ClaimTypes.NameIdentifier, user.Id.ToString()) 
-                    |]
-                    let identity = ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme)
-                    let principal = ClaimsPrincipal(identity)
-                    do! ctx.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal)
-                    return! json {| status = "success" |} next ctx
+                match! tryBindJson<LoginRequest> ctx with
+                | Error msg -> return! badRequest msg next ctx
+                | Ok dto ->
+                    match Validation.validateRegistration dto.Username dto.Password with
+                    | Error errors ->
+                        return! (setStatusCode 400 >=> json {| errors = errors |}) next ctx
+                    | Ok () ->
+                        match Storage.getUserByUsername dto.Username with
+                        | Some _ ->
+                            return! badRequest "Username already exists" next ctx
+                        | None ->
+                            try
+                                let hash = BCrypt.Net.BCrypt.HashPassword(dto.Password)
+                                let user = Storage.createUser dto.Username hash
+                                do! signInUser ctx user
+                                return! json {| status = "success" |} next ctx
+                            with :? Microsoft.Data.Sqlite.SqliteException ->
+                                // Unique constraint race between the check and the insert.
+                                return! badRequest "Username already exists" next ctx
             }
 
     let logoutHandler : HttpHandler =
@@ -79,13 +101,15 @@ module Program =
     let postExpenseHandler : HttpHandler =
         fun next ctx ->
             task {
-                let! dto = ctx.BindJsonAsync<ExpenseDto>()
-                match Validation.validateExpense dto with
-                | Ok validDto -> 
-                    let exp = Storage.insertExpense (getUserId ctx) validDto
-                    return! json exp next ctx
-                | Error errors ->
-                    return! (setStatusCode 400 >=> json {| errors = errors |}) next ctx
+                match! tryBindJson<ExpenseDto> ctx with
+                | Error msg -> return! badRequest msg next ctx
+                | Ok dto ->
+                    match Validation.validateExpense dto with
+                    | Ok validDto ->
+                        let exp = Storage.insertExpense (getUserId ctx) validDto
+                        return! json exp next ctx
+                    | Error errors ->
+                        return! (setStatusCode 400 >=> json {| errors = errors |}) next ctx
             }
             
     let importCsvHandler : HttpHandler =
@@ -133,9 +157,16 @@ module Program =
     let postBudgetHandler : HttpHandler =
         fun next ctx ->
             task {
-                let! dto = ctx.BindJsonAsync<Budget>()
-                Storage.setBudget (getUserId ctx) dto.Category dto.LimitAmount
-                return! json {| status = "success" |} next ctx
+                match! tryBindJson<Budget> ctx with
+                | Error msg -> return! badRequest msg next ctx
+                | Ok dto ->
+                    if not (Validation.isValidString 100 dto.Category) then
+                        return! badRequest "Category is required and max 100 chars." next ctx
+                    elif dto.LimitAmount <= 0m then
+                        return! badRequest "Limit must be greater than 0." next ctx
+                    else
+                        Storage.setBudget (getUserId ctx) dto.Category dto.LimitAmount
+                        return! json {| status = "success" |} next ctx
             }
 
     let apiRoutes =
@@ -173,7 +204,7 @@ module Program =
     let main args =
         let builder = WebApplication.CreateBuilder(args)
         
-        DotNetEnv.Env.Load("/home/micu/f_sharp/.env")
+        DotNetEnv.Env.Load("/home/micu/f_sharp/.env") |> ignore
         let port = Environment.GetEnvironmentVariable("APP_PORT")
         let portStr = if String.IsNullOrEmpty(port) then "5000" else port
         
@@ -182,6 +213,31 @@ module Program =
         ) |> ignore
 
         builder.Services.AddGiraffe() |> ignore
+
+        // Brute-force protection: strict per-IP fixed window on auth endpoints.
+        builder.Services.AddRateLimiter(fun options ->
+            options.RejectionStatusCode <- StatusCodes.Status429TooManyRequests
+            options.GlobalLimiter <-
+                System.Threading.RateLimiting.PartitionedRateLimiter.Create<HttpContext, string>(fun ctx ->
+                    let path = ctx.Request.Path.Value
+                    let isAuthEndpoint = path = "/api/login" || path = "/api/register"
+                    if isAuthEndpoint then
+                        let ip =
+                            match ctx.Connection.RemoteIpAddress with
+                            | null -> "unknown"
+                            | addr -> addr.ToString()
+                        System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
+                            "auth:" + ip,
+                            fun _ ->
+                                System.Threading.RateLimiting.FixedWindowRateLimiterOptions(
+                                    PermitLimit = 10,
+                                    Window = TimeSpan.FromMinutes(1.0),
+                                    QueueLimit = 0
+                                ))
+                    else
+                        System.Threading.RateLimiting.RateLimitPartition.GetNoLimiter("global"))
+        ) |> ignore
+
         builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
                .AddCookie(fun options -> 
                    options.Events.OnRedirectToLogin <- fun context -> 
@@ -198,16 +254,20 @@ module Program =
         Storage.initDb()
         Storage.seedAdmin()
 
+        // Behind nginx: trust loopback proxy for the real client IP and scheme,
+        // so rate limiting and Secure cookies behave correctly.
+        let forwardedOptions = ForwardedHeadersOptions()
+        forwardedOptions.ForwardedHeaders <-
+            Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor
+            ||| Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto
+        app.UseForwardedHeaders(forwardedOptions) |> ignore
+
+        app.UseRateLimiter() |> ignore
         app.UseAuthentication() |> ignore
         app.UseAuthorization() |> ignore
 
-        // Serve files from public folder
-        let staticFileOptions = Microsoft.AspNetCore.Builder.StaticFileOptions()
-        staticFileOptions.FileProvider <- new Microsoft.Extensions.FileProviders.PhysicalFileProvider("/home/micu/f_sharp/public")
-        app.UseStaticFiles(staticFileOptions) |> ignore
-
-        // Add default document logic (redirect / to /index.html implicitly by UseDefaultFiles or explicit middleware)
-        app.Use(fun (context: HttpContext) (next: RequestDelegate) -> 
+        // Map friendly routes to static documents before the static file middleware runs.
+        app.Use(fun (context: HttpContext) (next: RequestDelegate) ->
             task {
                 if context.Request.Path.Value = "/" then
                     context.Request.Path <- PathString("/index.html")
@@ -217,6 +277,8 @@ module Program =
             } :> System.Threading.Tasks.Task
         ) |> ignore
 
+        let staticFileOptions = Microsoft.AspNetCore.Builder.StaticFileOptions()
+        staticFileOptions.FileProvider <- new Microsoft.Extensions.FileProviders.PhysicalFileProvider("/home/micu/f_sharp/public")
         app.UseStaticFiles(staticFileOptions) |> ignore
 
         app.UseGiraffeErrorHandler(errorHandler) |> ignore

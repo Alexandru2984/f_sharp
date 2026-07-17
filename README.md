@@ -28,9 +28,9 @@ dotnet run --project src/FinanceAnomalyDetector/FinanceAnomalyDetector.fsproj
 The server will start listening on `http://localhost:5000`.
 
 ### Database
-The app uses SQLite (`data/finance.db`). Running the app will auto-migrate and seed a default user:
-**Username:** `admin`  
-**Password:** `admin123`
+The app uses SQLite (`data/finance.db`) and auto-creates its schema on startup.
+An admin account is seeded only when `ADMIN_USERNAME` and `ADMIN_PASSWORD` are set
+in the environment (or `.env`); no default credentials are shipped.
 
 ### Security
 - Passwords are hashed using BCrypt.

@@ -96,7 +96,7 @@ const app = {
                 <div class="card"><h3>Current Month</h3><div class="value">${stats.currentMonthSpending.toFixed(2)}</div></div>
                 <div class="card"><h3>Avg Monthly</h3><div class="value">${stats.averageMonthlySpending.toFixed(2)}</div></div>
                 <div class="card"><h3>Anomalies</h3><div class="value">${stats.anomalyCount}</div></div>
-                <div class="card"><h3>Highest Risk Category</h3><div class="value">${stats.highestRiskCategory}</div></div>
+                <div class="card"><h3>Highest Risk Category</h3><div class="value">${escapeHTML(stats.highestRiskCategory)}</div></div>
             </div>
 
             ${budgets.length > 0 ? `
@@ -105,7 +105,7 @@ const app = {
                 ${budgets.map(b => `
                     <div class="card">
                         <div class="flex-between">
-                            <h3 style="margin-bottom:0">${b.category}</h3>
+                            <h3 style="margin-bottom:0">${escapeHTML(b.category)}</h3>
                             <span style="font-size:0.8rem; color:var(--text-secondary)">${b.spent.toFixed(0)} / ${b.limit.toFixed(0)}</span>
                         </div>
                         <div class="progress-container">
@@ -278,7 +278,7 @@ const app = {
                         <label>Category</label>
                         <select id="b_category" style="width:100%; padding:0.75rem; background:#121212; color:white; border:1px solid #333;" required>
                             <option value="">Select a category</option>
-                            ${categories.map(c => `<option value="${c.category}">${c.category}</option>`).join('')}
+                            ${categories.map(c => `<option value="${escapeHTML(c.category)}">${escapeHTML(c.category)}</option>`).join('')}
                         </select>
                     </div>
                     <div class="form-group">
@@ -297,7 +297,7 @@ const app = {
                     <tbody>
                         ${budgets.map(b => `
                             <tr>
-                                <td>${b.category}</td>
+                                <td>${escapeHTML(b.category)}</td>
                                 <td>${b.limit.toFixed(2)}</td>
                             </tr>
                         `).join('')}

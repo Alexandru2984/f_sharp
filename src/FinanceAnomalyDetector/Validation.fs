@@ -1,8 +1,22 @@
 namespace FinanceAnomalyDetector
 
 open System
+open System.Text.RegularExpressions
 
 module Validation =
+    let private usernameRegex = Regex(@"^[a-zA-Z0-9._-]{3,50}$", RegexOptions.Compiled)
+
+    let validateRegistration (username: string) (password: string) =
+        let errors = [
+            if isNull username || not (usernameRegex.IsMatch(username)) then
+                yield "Username must be 3-50 characters using only letters, digits, dot, underscore or dash."
+            if isNull password || password.Length < 8 then
+                yield "Password must be at least 8 characters."
+            if not (isNull password) && password.Length > 128 then
+                yield "Password must be at most 128 characters."
+        ]
+        if errors.IsEmpty then Ok () else Error errors
+
     let isValidAmount (amount: decimal) =
         amount > 0m && amount < 100000000m
 

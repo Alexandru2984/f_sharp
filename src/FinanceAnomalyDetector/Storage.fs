@@ -115,10 +115,14 @@ module Storage =
         let id = conn.QuerySingle<int>(sql, {| Username = username; PasswordHash = passwordHash; CreatedAt = DateTime.UtcNow |})
         { Id = id; Username = username; PasswordHash = passwordHash; CreatedAt = DateTime.UtcNow }
 
+    /// Seeds an admin account only when ADMIN_USERNAME and ADMIN_PASSWORD are
+    /// provided via environment; never ships a hardcoded default credential.
     let seedAdmin () =
-        let admin = getUserByUsername "admin"
-        match admin with
-        | None -> 
-            let hash = BCrypt.Net.BCrypt.HashPassword("admin123")
-            createUser "admin" hash |> ignore
-        | Some _ -> ()
+        let username = Environment.GetEnvironmentVariable("ADMIN_USERNAME")
+        let password = Environment.GetEnvironmentVariable("ADMIN_PASSWORD")
+        if not (String.IsNullOrWhiteSpace username) && not (String.IsNullOrWhiteSpace password) then
+            match getUserByUsername username with
+            | None ->
+                let hash = BCrypt.Net.BCrypt.HashPassword(password)
+                createUser username hash |> ignore
+            | Some _ -> ()

@@ -20,15 +20,13 @@ module AnomalyEngine =
         results
         
     let runAll userId =
-        Storage.initDb()
-        
-        let conn = new Microsoft.Data.Sqlite.SqliteConnection(Storage.connectionString)
+        use conn = new Microsoft.Data.Sqlite.SqliteConnection(Storage.connectionString)
         conn.Open()
-        let cmd = conn.CreateCommand()
+        use cmd = conn.CreateCommand()
         cmd.CommandText <- "DELETE FROM Anomalies WHERE UserId = @UserId"
         cmd.Parameters.AddWithValue("@UserId", userId) |> ignore
         cmd.ExecuteNonQuery() |> ignore
-        
+
         let expenses = Storage.getAllExpenses userId
         let mutable detected = 0
         for exp in expenses do
