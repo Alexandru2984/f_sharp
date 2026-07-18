@@ -14,8 +14,17 @@ Date,Amount,Currency,Category,Merchant,Description
 2026-05-03T12:00:00,100.0,USD,Entertainment,Walmart,Unusual category for Walmart
 CSV
 
-curl -c cookies.txt -X POST -H "Content-Type: application/json" -d '{"username": "admin", "password": "admin123"}' http://localhost:5000/api/login
-curl -b cookies.txt -F "file=@/home/micu/f_sharp/data/demo.csv" http://localhost:5000/api/expenses/import-csv
-curl -b cookies.txt -X POST http://localhost:5000/api/anomalies/run
+# Credentials come from the environment — never hardcode them.
+#   SEED_USER=you SEED_PASS=yourpass ./scripts/seed_demo_data.sh
+# In-app there is now also a one-click loader: POST /api/demo-data.
+BASE_URL="${BASE_URL:-http://localhost:5000}"
+: "${SEED_USER:?set SEED_USER}"
+: "${SEED_PASS:?set SEED_PASS}"
+ORIGIN="-H Origin:$BASE_URL"
+
+curl -c cookies.txt $ORIGIN -X POST -H "Content-Type: application/json" \
+  -d "{\"username\": \"$SEED_USER\", \"password\": \"$SEED_PASS\"}" "$BASE_URL/api/login"
+curl -b cookies.txt $ORIGIN -F "file=@/home/micu/f_sharp/data/demo.csv" "$BASE_URL/api/expenses/import-csv"
+curl -b cookies.txt $ORIGIN -X POST "$BASE_URL/api/anomalies/run"
 rm cookies.txt
 echo "Demo data seeded."

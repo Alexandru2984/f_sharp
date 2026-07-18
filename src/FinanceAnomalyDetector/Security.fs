@@ -17,7 +17,12 @@ module Security =
     /// browsers always send at least one on same-origin POST/PUT/DELETE/PATCH,
     /// so absence signals a forged or non-browser cross-origin call.
     let originAllowed (allowedHosts: Set<string>) (requestHost: string) (origin: string option) (referer: string option) =
-        let permitted h = h = requestHost.ToLowerInvariant() || Set.contains h allowedHosts
+        // When an explicit allowlist is configured (production) trust only it,
+        // ignoring the request's own Host header (which a client can influence).
+        // Otherwise (dev) fall back to matching the request host.
+        let permitted h =
+            if Set.isEmpty allowedHosts then h = requestHost.ToLowerInvariant()
+            else Set.contains h allowedHosts
         match origin |> Option.bind hostOfUrl with
         | Some h -> permitted h
         | None ->
@@ -30,16 +35,16 @@ module Security =
         | true, v when v.Count > 0 && not (String.IsNullOrWhiteSpace v[0]) -> Some (v[0].Trim())
         | _ -> None
 
-    /// Real client IP for rate limiting. Behind Cloudflare, XForwardedFor (and
-    /// hence RemoteIpAddress) resolves to a Cloudflare edge, so CF-Connecting-IP
-    /// is preferred when present.
+    /// Real client IP for rate limiting. This trusts only RemoteIpAddress,
+    /// which the ForwardedHeaders middleware derives from the proxy chain.
+    /// nginx restores the true client from CF-Connecting-IP *only* for
+    /// connections originating in Cloudflare's ranges (set_real_ip_from), so a
+    /// forged CF-Connecting-IP on a direct-to-origin request cannot spoof or
+    /// poison a rate-limit bucket.
     let clientIp (ctx: HttpContext) =
-        match headerValue ctx "CF-Connecting-IP" with
-        | Some ip -> ip
-        | None ->
-            match ctx.Connection.RemoteIpAddress with
-            | null -> "unknown"
-            | addr -> addr.ToString()
+        match ctx.Connection.RemoteIpAddress with
+        | null -> "unknown"
+        | addr -> addr.ToString()
 
     let private mutatingMethods = set [ "POST"; "PUT"; "DELETE"; "PATCH" ]
 

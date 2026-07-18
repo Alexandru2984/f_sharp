@@ -1,9 +1,20 @@
 bin/
 obj/
 publish/
-data/finance.db
-data/finance.db-shm
-data/finance.db-wal
+
+# Database, its WAL/SHM sidecars, and any backup snapshots — never commit
+# these: they hold password hashes and financial data. (data/demo.csv stays.)
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/*.db-*
+data/*.db.*
+data/*.sqlite
+data/*.sqlite3
+
+# DataProtection signing keys — committing these lets anyone forge sessions
+data/keys/
+
 .env
 .idea/
 .vscode/

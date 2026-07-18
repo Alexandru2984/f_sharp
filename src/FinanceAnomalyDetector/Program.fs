@@ -529,8 +529,14 @@ module Program =
                     context.Request.Path <- PathString("/index.html")
                 if context.Request.Path.Value = "/docs" then
                     context.Request.Path <- PathString("/docs.html")
-                context.Response.Headers.ContentSecurityPolicy <-
+                let headers = context.Response.Headers
+                headers.ContentSecurityPolicy <-
                     "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'self'"
+                // Present regardless of the proxy in front, so security doesn't
+                // depend on a particular nginx vhost's add_header block.
+                headers["X-Content-Type-Options"] <- "nosniff"
+                headers["Referrer-Policy"] <- "strict-origin-when-cross-origin"
+                headers["X-Frame-Options"] <- "SAMEORIGIN"
                 return! next.Invoke(context)
             } :> System.Threading.Tasks.Task
         ) |> ignore
