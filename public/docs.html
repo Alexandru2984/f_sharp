@@ -21,6 +21,7 @@
         <p>All <code>/api</code> endpoints except login/register require an authenticated cookie session. Unauthenticated requests receive <code>401</code>.
            A machine-readable spec is available at <a href="/openapi.yaml">/openapi.yaml</a>.</p>
         <p style="color: var(--text-secondary);">Creating, updating, deleting or importing expenses automatically re-runs anomaly detection in the background — no manual trigger needed.</p>
+        <p style="color: var(--text-secondary);">State-changing requests (POST/PUT/DELETE/PATCH) must be same-origin: a matching <code>Origin</code> or <code>Referer</code> header is required, otherwise the request is rejected with <code>403</code>. Auth and expensive endpoints are rate limited (<code>429</code> when exceeded).</p>
 
         <h2 style="margin-top: 2rem;">Auth</h2>
 

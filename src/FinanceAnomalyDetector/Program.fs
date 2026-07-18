@@ -11,6 +11,7 @@ open Giraffe
 open Microsoft.Extensions.Logging
 open Microsoft.AspNetCore.Authentication
 open Microsoft.AspNetCore.Authentication.Cookies
+open Microsoft.AspNetCore.DataProtection
 open System.Security.Claims
 
 module Program =
@@ -54,6 +55,11 @@ module Program =
         let identity = ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme)
         ctx.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, ClaimsPrincipal(identity))
 
+    /// A valid BCrypt hash verified against when the username doesn't exist,
+    /// so login timing doesn't reveal whether an account is registered.
+    let private dummyPasswordHash =
+        lazy (BCrypt.Net.BCrypt.HashPassword("finance-anomaly-detector-nonexistent-user"))
+
     let loginHandler : HttpHandler =
         fun next ctx ->
             task {
@@ -64,7 +70,11 @@ module Program =
                     | Some user when BCrypt.Net.BCrypt.Verify(dto.Password, user.PasswordHash) ->
                         do! signInUser ctx user
                         return! json {| status = "success" |} next ctx
-                    | _ ->
+                    | Some _ ->
+                        return! (setStatusCode 401 >=> json {| error = "Invalid credentials" |}) next ctx
+                    | None ->
+                        // Spend a comparable bcrypt verify to equalize timing.
+                        BCrypt.Net.BCrypt.Verify(dto.Password, dummyPasswordHash.Value) |> ignore
                         return! (setStatusCode 401 >=> json {| error = "Invalid credentials" |}) next ctx
             }
 
@@ -157,12 +167,18 @@ module Program =
             else
                 (setStatusCode 404 >=> json {| error = "Expense not found" |}) next ctx
 
-    /// Escapes a CSV field per RFC 4180.
+    /// Escapes a CSV field per RFC 4180, and neutralizes spreadsheet formula
+    /// injection: a leading =, +, -, @, tab or CR would be executed as a
+    /// formula when the export is opened in Excel/Sheets, so such fields are
+    /// prefixed with a single quote.
     let private csvField (value: string) =
         let value = if isNull value then "" else value
-        if value.Contains(",") || value.Contains("\"") || value.Contains("\n") || value.Contains("\r") then
-            "\"" + value.Replace("\"", "\"\"") + "\""
-        else value
+        let guarded =
+            if value.Length > 0 && "=+-@\t\r".IndexOf(value[0]) >= 0 then "'" + value
+            else value
+        if guarded.Contains(",") || guarded.Contains("\"") || guarded.Contains("\n") || guarded.Contains("\r") then
+            "\"" + guarded.Replace("\"", "\"\"") + "\""
+        else guarded
 
     let exportCsvHandler : HttpHandler =
         fun next ctx ->
@@ -391,49 +407,84 @@ module Program =
             if Directory.Exists(configured) then Path.GetFullPath(configured)
             else Path.Combine(AppContext.BaseDirectory, "public")
 
-        Storage.configure (envOr "DB_PATH" (Path.Combine("data", "finance.db")))
+        let dbPath = envOr "DB_PATH" (Path.Combine("data", "finance.db"))
+        Storage.configure dbPath
 
-        // ASPNETCORE_URLS (e.g. in containers) takes precedence; otherwise
-        // bind to localhost only, since nginx fronts the app.
-        if String.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ASPNETCORE_URLS")) then
-            builder.WebHost.ConfigureKestrel(fun serverOptions ->
+        // Hosts permitted as the Origin/Referer of state-changing requests
+        // (CSRF defense). Empty -> only the request's own Host is accepted.
+        let allowedHosts = Security.parseAllowedHosts (envOr "ALLOWED_ORIGINS" "")
+
+        // DataProtection keys sign the auth cookie. Persist them to a private
+        // directory (under the locked-down data dir) and scope them to this
+        // app, so other ASP.NET services run by the same OS user can neither
+        // read nor forge our session tickets.
+        let keysDir =
+            let dbDir = Path.GetDirectoryName(Path.GetFullPath dbPath)
+            let d = envOr "KEYS_DIR" (Path.Combine(dbDir, "keys"))
+            Directory.CreateDirectory(d) |> ignore
+            try File.SetUnixFileMode(d, UnixFileMode.UserRead ||| UnixFileMode.UserWrite ||| UnixFileMode.UserExecute)
+            with _ -> ()
+            d
+
+        builder.WebHost.ConfigureKestrel(fun serverOptions ->
+            // Cap request bodies to align with the 5 MB CSV import limit.
+            serverOptions.Limits.MaxRequestBodySize <- Nullable(6L * 1024L * 1024L)
+            // ASPNETCORE_URLS (e.g. in containers) takes precedence; otherwise
+            // bind to localhost only, since nginx fronts the app.
+            if String.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ASPNETCORE_URLS")) then
                 serverOptions.ListenLocalhost(port)
-            ) |> ignore
+        ) |> ignore
 
         builder.Services.AddGiraffe() |> ignore
 
-        // Brute-force protection: strict per-IP fixed window on auth endpoints.
+        builder.Services.AddDataProtection()
+            .SetApplicationName("FinanceAnomalyDetector")
+            .PersistKeysToFileSystem(DirectoryInfo(keysDir)) |> ignore
+
+        // Rate limiting: strict per-IP window on auth endpoints (brute force),
+        // a tight per-user window on expensive endpoints, and a generous
+        // per-user window on the rest of the API (authenticated DoS). Keyed on
+        // the real client IP (CF-Connecting-IP behind Cloudflare).
         builder.Services.AddRateLimiter(fun options ->
             options.RejectionStatusCode <- StatusCodes.Status429TooManyRequests
             options.GlobalLimiter <-
                 System.Threading.RateLimiting.PartitionedRateLimiter.Create<HttpContext, string>(fun ctx ->
                     let path = ctx.Request.Path.Value
-                    let isAuthEndpoint = path = "/api/login" || path = "/api/register"
-                    if isAuthEndpoint then
-                        let ip =
-                            match ctx.Connection.RemoteIpAddress with
-                            | null -> "unknown"
-                            | addr -> addr.ToString()
+                    let ip = Security.clientIp ctx
+                    let principalId =
+                        let claim = ctx.User.FindFirst(ClaimTypes.NameIdentifier)
+                        if isNull claim then "ip:" + ip else "user:" + claim.Value
+                    let fixedWindow key limit =
                         System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
-                            "auth:" + ip,
+                            key,
                             fun _ ->
                                 System.Threading.RateLimiting.FixedWindowRateLimiterOptions(
-                                    PermitLimit = 10,
+                                    PermitLimit = limit,
                                     Window = TimeSpan.FromMinutes(1.0),
-                                    QueueLimit = 0
-                                ))
+                                    QueueLimit = 0))
+                    if path = "/api/login" || path = "/api/register" then
+                        fixedWindow ("auth:" + ip) 10
+                    elif path = "/api/anomalies/run" || path = "/api/demo-data" || path = "/api/expenses/import-csv" then
+                        fixedWindow ("heavy:" + principalId) 15
+                    elif path.StartsWith("/api/") then
+                        fixedWindow ("api:" + principalId) 240
                     else
-                        System.Threading.RateLimiting.RateLimitPartition.GetNoLimiter("global"))
+                        System.Threading.RateLimiting.RateLimitPartition.GetNoLimiter("static"))
         ) |> ignore
 
         builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
-               .AddCookie(fun options -> 
-                   options.Events.OnRedirectToLogin <- fun context -> 
+               .AddCookie(fun options ->
+                   options.Events.OnRedirectToLogin <- fun context ->
                        context.Response.StatusCode <- 401
                        System.Threading.Tasks.Task.CompletedTask
+                   // __Host- prefix pins the cookie to this host over HTTPS with
+                   // Path=/ and no Domain, blocking sibling-subdomain injection.
+                   options.Cookie.Name <- "__Host-FinanceAuth"
                    options.Cookie.HttpOnly <- true
                    options.Cookie.SecurePolicy <- CookieSecurePolicy.Always
                    options.Cookie.SameSite <- Microsoft.AspNetCore.Http.SameSiteMode.Strict
+                   options.ExpireTimeSpan <- TimeSpan.FromHours(8.0)
+                   options.SlidingExpiration <- true
                ) |> ignore
         builder.Services.AddAuthorization() |> ignore
         
@@ -450,9 +501,25 @@ module Program =
             ||| Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto
         app.UseForwardedHeaders(forwardedOptions) |> ignore
 
-        app.UseRateLimiter() |> ignore
+        // Authentication first so the rate limiter can partition per user and
+        // the CSRF guard sees the authenticated context.
         app.UseAuthentication() |> ignore
         app.UseAuthorization() |> ignore
+        app.UseRateLimiter() |> ignore
+
+        // CSRF defense-in-depth: reject state-changing /api requests whose
+        // Origin/Referer isn't same-origin (SameSite=Strict cookies alone don't
+        // cover sibling subdomains under the shared parent domain).
+        app.Use(fun (ctx: HttpContext) (next: RequestDelegate) ->
+            task {
+                if Security.isGuardedRequest ctx && not (Security.requestOriginAllowed allowedHosts ctx) then
+                    ctx.Response.StatusCode <- 403
+                    ctx.Response.ContentType <- "application/json"
+                    do! ctx.Response.WriteAsync("{\"error\":\"Cross-origin request blocked\"}")
+                else
+                    return! next.Invoke(ctx)
+            } :> System.Threading.Tasks.Task
+        ) |> ignore
 
         // Map friendly routes to static documents before the static file middleware
         // runs, and attach a strict CSP (all scripts and styles are self-hosted).
@@ -463,7 +530,7 @@ module Program =
                 if context.Request.Path.Value = "/docs" then
                     context.Request.Path <- PathString("/docs.html")
                 context.Response.Headers.ContentSecurityPolicy <-
-                    "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'self'"
+                    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'self'"
                 return! next.Invoke(context)
             } :> System.Threading.Tasks.Task
         ) |> ignore

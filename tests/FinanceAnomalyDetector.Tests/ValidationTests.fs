@@ -39,15 +39,22 @@ let ``overlong fields are rejected`` () =
 
 [<Fact>]
 let ``password policy enforces length bounds`` () =
-    match Validation.validatePassword "short" with
+    match Validation.validatePassword (String.replicate (Validation.MinPasswordLength - 1) "x") with
     | Error _ -> ()
     | Ok _ -> failwith "expected Error for short password"
     match Validation.validatePassword (String.replicate 129 "x") with
     | Error _ -> ()
     | Ok _ -> failwith "expected Error for overlong password"
-    match Validation.validatePassword "long-enough-password" with
+    match Validation.validatePassword (String.replicate Validation.MinPasswordLength "x") with
     | Ok () -> ()
     | Error e -> failwithf "expected Ok, got %A" e
+
+[<Fact>]
+let ``overlong description is rejected`` () =
+    let dto = { mkDto 10m "Food" "KFC" DateTime.UtcNow with Description = String.replicate 501 "a" }
+    match Validation.validateExpense dto with
+    | Ok _ -> failwith "expected Error for long description"
+    | Error errs -> Assert.Contains(errs, fun (e: string) -> e.Contains "Description")
 
 [<Fact>]
 let ``usernames must be 3-50 chars from the safe alphabet`` () =

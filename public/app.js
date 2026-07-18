@@ -783,8 +783,8 @@ const app = {
                 <h3 style="margin-bottom:1rem;">Change Password</h3>
                 <form data-form="change-password">
                     <div class="form-group"><label>Current password</label><input type="password" name="oldPassword" autocomplete="current-password" required></div>
-                    <div class="form-group"><label>New password (min 8 chars)</label><input type="password" name="newPassword" autocomplete="new-password" minlength="8" required></div>
-                    <div class="form-group"><label>Confirm new password</label><input type="password" name="confirmPassword" autocomplete="new-password" minlength="8" required></div>
+                    <div class="form-group"><label>New password (min 12 chars)</label><input type="password" name="newPassword" autocomplete="new-password" minlength="12" required></div>
+                    <div class="form-group"><label>Confirm new password</label><input type="password" name="confirmPassword" autocomplete="new-password" minlength="12" required></div>
                     <button type="submit" class="btn">Change Password</button>
                 </form>
             </div>

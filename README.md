@@ -146,8 +146,18 @@ via `sqlite3 .backup` (safe under WAL with live writers), gzips it and keeps
 the newest 14 archives — wired to cron at 03:45.
 
 Security notes:
-- passwords hashed with BCrypt; sessions via HttpOnly/Secure/SameSite=Strict cookies
-- per-IP fixed-window rate limiting on `/api/login` and `/api/register`
-- strict `Content-Security-Policy` (all assets self-hosted), forwarded-header
-  handling behind the reverse proxy
-- no default credentials are shipped
+- passwords hashed with BCrypt (min 12 chars); login runs a constant bcrypt
+  even for unknown users so timing doesn't leak account existence
+- sessions via a `__Host-`-prefixed HttpOnly/Secure/SameSite=Strict cookie
+  with an 8-hour sliding expiry; DataProtection keys are app-scoped and stored
+  privately (0700) so co-located services can't forge tickets
+- CSRF defense-in-depth: state-changing `/api` requests must carry a
+  same-origin `Origin`/`Referer` (configurable via `ALLOWED_ORIGINS`)
+- rate limiting keyed on the real client IP (CF-Connecting-IP): 10/min on
+  auth endpoints, 15/min on expensive endpoints, 240/min per user elsewhere
+- background anomaly detection is coalesced per user (no unbounded fan-out)
+- strict `Content-Security-Policy` (`script-src 'self'`, `object-src 'none'`,
+  `base-uri 'none'`), CSV export neutralizes spreadsheet formula injection,
+  request bodies capped at 6 MB, forwarded-header handling behind nginx
+- no default credentials are shipped; the SQLite database and backups are
+  chmod 600 in a 700 directory

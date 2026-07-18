@@ -51,17 +51,36 @@ module AnomalyEngine =
 
     // ---- background execution ----
 
-    let private userLocks = ConcurrentDictionary<int, SemaphoreSlim>()
+    /// Per-user coalescing state. A burst of data changes collapses into at
+    /// most one in-flight run plus one queued rerun, so rapid mutations never
+    /// spawn a blocked thread per request (no threadpool starvation) and never
+    /// pile up redundant recomputations.
+    type private RunState() =
+        let gate = obj ()
+        let mutable running = false
+        let mutable rerun = false
+        /// True if the caller should start the run loop; otherwise the request
+        /// is folded into the already-running loop.
+        member _.TryAcquire() =
+            lock gate (fun () ->
+                if running then rerun <- true; false
+                else running <- true; true)
+        /// Called at the end of a run: true if another run was requested meanwhile.
+        member _.ShouldContinue() =
+            lock gate (fun () ->
+                if rerun then rerun <- false; true
+                else running <- false; false)
 
-    /// Fire-and-forget detection run, serialized per user so concurrent data
-    /// changes never interleave two runs. Failures are logged, not thrown.
+    let private runStates = ConcurrentDictionary<int, RunState>()
+
+    /// Fire-and-forget detection run, serialized and coalesced per user.
+    /// Failures are logged, not thrown.
     let triggerBackgroundRun (log: exn -> unit) userId =
-        let semaphore = userLocks.GetOrAdd(userId, fun _ -> new SemaphoreSlim(1, 1))
-        Task.Run(fun () ->
-            semaphore.Wait()
-            try
-                try runAll userId |> ignore
-                with ex -> log ex
-            finally
-                semaphore.Release() |> ignore)
-        |> ignore
+        let state = runStates.GetOrAdd(userId, fun _ -> RunState())
+        if state.TryAcquire() then
+            Task.Run(fun () ->
+                let mutable again = true
+                while again do
+                    (try runAll userId |> ignore with ex -> log ex)
+                    again <- state.ShouldContinue())
+            |> ignore
